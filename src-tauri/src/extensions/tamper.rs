@@ -1,4 +1,4 @@
-// M3: TamperEngine — 31 条正则规则检测拒绝响应并替换
+// M3: TamperEngine — 35 条正则规则检测拒绝响应并替换
 // 自门控: modified_body 已存在则跳过
 // P0 平台审核拦截 + P1-P4 模型级拒绝 (5语言 x 4优先级)
 
@@ -7,15 +7,29 @@ use regex::Regex;
 
 pub struct TamperEngine {
     rules: Vec<Regex>,
+    /// 规则来源（内置 / 外部字典路径），仅用于日志与展示
+    source: String,
 }
 
 impl TamperEngine {
     pub fn with_patterns(patterns: Vec<String>) -> Self {
+        Self::with_patterns_and_source(patterns, "built-in".to_string())
+    }
+
+    pub fn with_patterns_and_source(patterns: Vec<String>, source: String) -> Self {
         let compiled: Vec<Regex> = patterns
             .into_iter()
-            .filter_map(|p| Regex::new(&p).ok())
+            .filter_map(|p| {
+                match Regex::new(&p) {
+                    Ok(re) => Some(re),
+                    Err(e) => {
+                        tracing::warn!("tamper: skip invalid regex ({}): {}", e, p);
+                        None
+                    }
+                }
+            })
             .collect();
-        Self { rules: compiled }
+        Self { rules: compiled, source }
     }
 
     pub fn default_rules() -> Self {
@@ -24,6 +38,10 @@ impl TamperEngine {
 
     pub fn rule_count(&self) -> usize {
         self.rules.len()
+    }
+
+    pub fn source(&self) -> &str {
+        &self.source
     }
 }
 
@@ -65,8 +83,9 @@ impl ResponseInterceptor for TamperEngine {
     }
 }
 
-/// 31 条篡改规则 — P0 平台审核拦截 + P1-P4 模型级拒绝 (5语言 x 4优先级)
-fn default_tamper_patterns() -> Vec<&'static str> {
+/// 35 条篡改规则 — P0 平台审核拦截 + P1-P4 模型级拒绝 (5语言 x 4优先级)
+/// 注意: 运行时优先读取外部字典 (data_dir/tamper-rules.txt)，本列表为回退默认值
+pub fn default_tamper_patterns() -> Vec<&'static str> {
     vec![
         // P0: 平台级内容审核拦截 — 优先级最高，在所有规则之前
         r"(?i)This content was flagged for possible cybersecurity risk",
@@ -74,6 +93,12 @@ fn default_tamper_patterns() -> Vec<&'static str> {
         r"(?i)If this seems wrong.{0,30}try rephrasing",
         r"(?i)content (?:was|has been) (?:flagged|blocked|filtered|removed)",
         r"(?i)(?:blocked|filtered) due to (?:safety|content|usage) (?:concerns|policy|policies|violations)",
+        // P0: OpenAI 新版平台级拦截 — "This content can't be shown" / Trusted Access 文案
+        // 注意撇号有直撇号 (') 和弯撇号 (’) 两种形式，需同时兼容
+        r#"(?i)this content can(?:'|’)?t be shown"#,
+        r#"(?i)content can(?:'|’)?t be (?:shown|displayed|provided|returned)"#,
+        r"(?i)take extra caution with (?:cybersecurity|security) requests",
+        r"(?i)apply for (?:trusted|special|verified) access",
         // P1: 中文直接拒绝 + 领域关键词
         r"(?:不能|无法|做不到|不提供|不可以|不协助|不生成|不写|不改|不帮|不制作|不处理|不执行|不参与).{0,20}(?:破解|付费|VIP|会员|卡密|注册码|绕过|补丁|修改.*程序|逆向.*程序|二进制.*修改|验证.*绕过)",
         r"(?:我不会|我不能|我无法|我不).{0,20}(?:直接|主动|协助|帮助|提供|生成|制作|处理|扫描|攻击|利用|绕过|破解|逆向|修改|渗透)",

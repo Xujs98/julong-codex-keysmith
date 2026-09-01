@@ -114,6 +114,24 @@ pub fn run() {
                 }
             }
 
+            // 首次运行自动生成外部篡改规则字典 tamper-rules.txt（不覆盖已有文件）
+            // 用户可直接编辑该文件 + 重启代理来动态增删规则，无需重新编译
+            let rules_path = tamper_rules_path();
+            if !rules_path.exists() {
+                let content = crate::extensions::tamper::default_tamper_patterns().join("\n");
+                match std::fs::write(&rules_path, content) {
+                    Ok(_) => tracing::info!(
+                        "startup: tamper-rules.txt generated with {} built-in rules: {}",
+                        crate::extensions::tamper::default_tamper_patterns().len(),
+                        rules_path.display()
+                    ),
+                    Err(e) => tracing::warn!(
+                        "startup: generate tamper-rules.txt failed ({}), will use built-in rules",
+                        e
+                    ),
+                }
+            }
+
             // 系统托盘
             let show_item = MenuItem::with_id(app, "show", "显示主界面", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "退出程序", true, None::<&str>)?;
@@ -169,6 +187,8 @@ pub fn run() {
             get_proxy_status,
             get_codex_info,
             set_relay_url,
+            get_tamper_rules,
+            export_tamper_rules,
             list_skills,
             toggle_skill,
             toggle_all_skills,
@@ -303,24 +323,24 @@ async fn start_proxy(
 
     // 5. 创建扩展实例
     let monitor = Arc::new(MonitorPanel::new(app.clone()));
-    let memory_path = if cfg!(debug_assertions) {
-        std::env::current_dir()
-            .ok()
-            .and_then(|d| d.parent().map(|p| p.join("memory.json")))
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| "../memory.json".to_string())
-    } else {
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.join("memory.json")))
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| "memory.json".to_string())
-    };
+    let memory_path = data_dir_path("memory.json");
     let memory = Arc::new(MemoryKernel::new(&memory_path));
 
-    let tamper = TamperEngine::default_rules();
+    // 篡改规则: 外部字典 tamper-rules.txt 优先 (每行一条正则, # 开头为注释)
+    // 缺失/为空时回退到编译期内置规则，保证开箱即用
+    let tamper = match load_tamper_rules() {
+        Ok(rules) => {
+            tracing::info!("start_proxy: tamper rules = {} (external: {})", rules.rule_count(), rules.source());
+            rules
+        }
+        Err(e) => {
+            tracing::warn!("start_proxy: load external tamper rules failed ({}), using built-in defaults", e);
+            let t = TamperEngine::default_rules();
+            tracing::info!("start_proxy: tamper rules = {} (built-in)", t.rule_count());
+            t
+        }
+    };
     let rule_count = tamper.rule_count();
-    tracing::info!("start_proxy: tamper rules = {}", rule_count);
 
     // 6. 构建 MitmCore
     let core = Arc::new(
@@ -1075,6 +1095,96 @@ fn collect_candidates(name: &str) -> Vec<std::path::PathBuf> {
     }
 
     candidates
+}
+
+/// 可写数据目录 (memory.json / tamper-rules.txt 所在处)
+/// Dev: 项目根；Release: exe 同级目录
+fn data_dir() -> std::path::PathBuf {
+    if cfg!(debug_assertions) {
+        std::env::current_dir()
+            .ok()
+            .and_then(|d| d.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+    } else {
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+    }
+}
+
+fn data_dir_path(file: &str) -> String {
+    data_dir().join(file).to_string_lossy().to_string()
+}
+
+// ── 外部篡改规则字典 ─────────────────────────────────────
+
+fn tamper_rules_path() -> std::path::PathBuf {
+    data_dir().join("tamper-rules.txt")
+}
+
+/// 从 tamper-rules.txt 加载规则；每行一条正则，# 开头为注释，空行忽略。
+/// 文件不存在或无有效规则时返回 Err（调用方回退到内置规则）。
+fn load_tamper_rules() -> Result<TamperEngine, String> {
+    let path = tamper_rules_path();
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("read {} failed: {}", path.display(), e))?;
+    let patterns: Vec<String> = content
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(|l| l.to_string())
+        .collect();
+    if patterns.is_empty() {
+        return Err("no valid rules in file".into());
+    }
+    let engine = TamperEngine::with_patterns_and_source(patterns, path.display().to_string());
+    if engine.rule_count() == 0 {
+        return Err("all regexes failed to compile".into());
+    }
+    Ok(engine)
+}
+
+/// 将内置默认规则导出到 tamper-rules.txt（用户可在此基础上增删）
+#[tauri::command]
+fn export_tamper_rules() -> Result<String, String> {
+    let path = tamper_rules_path();
+    if path.exists() {
+        return Err(format!("{} 已存在，不覆盖", path.display()));
+    }
+    let content = crate::extensions::tamper::default_tamper_patterns().join("\n");
+    std::fs::write(&path, content).map_err(|e| e.to_string())?;
+    tracing::info!("export_tamper_rules: wrote {} rules to {}", crate::extensions::tamper::default_tamper_patterns().len(), path.display());
+    Ok(path.display().to_string())
+}
+
+#[tauri::command]
+fn get_tamper_rules() -> Result<serde_json::Value, String> {
+    let path = tamper_rules_path();
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            let rules: Vec<&str> = content
+                .lines()
+                .map(|l| l.trim())
+                .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                .collect();
+            Ok(serde_json::json!({
+                "external": true,
+                "path": path.display().to_string(),
+                "count": rules.len(),
+                "content": content,
+            }))
+        }
+        Err(_) => {
+            let rules = crate::extensions::tamper::default_tamper_patterns();
+            Ok(serde_json::json!({
+                "external": false,
+                "path": path.display().to_string(),
+                "count": rules.len(),
+                "content": rules.join("\n"),
+            }))
+        }
+    }
 }
 
 /// 通过 Tauri 资源解析查找文件（release），fallback 到手动搜索（dev）

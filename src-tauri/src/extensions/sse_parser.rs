@@ -55,6 +55,10 @@ impl ResponseParser for UniversalSseParser {
                 } else {
                     None
                 };
+                // Responses API: function_call 事件的 arguments 是工具调用参数，不是正文
+                if event_type.contains("function_call") {
+                    continue;
+                }
                 collect_structured(&event, force, &mut thinking, &mut reply, 0);
             }
         }
@@ -162,6 +166,15 @@ fn collect_structured(
             }
         }
         Value::Object(map) => {
+            // Responses API: function_call / tool_call 项是工具调用参数，不是正文
+            let item_type = map.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            if item_type.eq_ignore_ascii_case("function_call")
+                || item_type.eq_ignore_ascii_case("tool_call")
+                || item_type.eq_ignore_ascii_case("custom_tool_call")
+            {
+                return;
+            }
+
             let next_force = if is_reasoning(obj) {
                 Some(Force::Thinking)
             } else {

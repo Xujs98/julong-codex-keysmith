@@ -49,6 +49,8 @@ const el = {
 // ── 状态 ────────────────────────────────
 
 let isRunning = false;
+// 防双击: invoke 进行中置灰开关，避免秒启秒停导致配置目录反复 deploy/restore
+let proxyBusy = false;
 let logEntries = 0;
 
 // 类别中文映射
@@ -123,19 +125,27 @@ function showToast(msg, type = 'err') {
 // ── 代理控制 ────────────────────────────
 
 el.navToggleProxy.addEventListener('click', async () => {
-    if (isRunning) {
-        await doStopProxy();
-    } else {
-        try {
-            const result = await invoke('preflight_check');
-            if (result.errors.length === 0) {
-                await doStartProxy();
-            } else {
-                showPreflight(result);
+    if (proxyBusy) return;
+    proxyBusy = true;
+    el.navToggleProxy.disabled = true;
+    try {
+        if (isRunning) {
+            await doStopProxy();
+        } else {
+            try {
+                const result = await invoke('preflight_check');
+                if (result.errors.length === 0) {
+                    await doStartProxy();
+                } else {
+                    showPreflight(result);
+                }
+            } catch (e) {
+                showToast(String(e), 'err');
             }
-        } catch (e) {
-            showToast(String(e), 'err');
         }
+    } finally {
+        proxyBusy = false;
+        el.navToggleProxy.disabled = false;
     }
 });
 
