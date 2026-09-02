@@ -14,7 +14,13 @@ static TEXT_KEY_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 
 const REASONING_MARKERS: &[&str] = &["reasoning", "thinking", "thought", "analysis"];
 const TEXT_KEYS: &[&str] = &[
-    "output_text", "content", "text", "message", "result", "answer", "completion",
+    "output_text",
+    "content",
+    "text",
+    "message",
+    "result",
+    "answer",
+    "completion",
 ];
 const WRAPPER_KEYS: &[&str] = &["response", "data", "body", "payload"];
 
@@ -253,7 +259,9 @@ fn merge_chunks(chunks: &[String]) -> String {
             if char_count % size == 0 {
                 let repeats = char_count / size;
                 let piece: String = chars[..size].iter().collect();
-                if (repeats >= 3 || piece.chars().count() >= 12) && piece.repeat(repeats) == stripped {
+                if (repeats >= 3 || piece.chars().count() >= 12)
+                    && piece.repeat(repeats) == stripped
+                {
                     return piece.trim().to_string();
                 }
             }

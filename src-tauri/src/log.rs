@@ -4,7 +4,7 @@
 
 use std::path::Path;
 use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, fmt};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 /// 初始化日志系统：控制台 + 每次运行独立文件
 /// 返回的 WorkerGuard 必须在应用整个生命周期内保活，否则尾部日志可能丢失
@@ -27,7 +27,7 @@ pub fn init_logging(log_dir: &str) -> WorkerGuard {
     let (file_writer, guard) = tracing_appender::non_blocking(file);
 
     let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,super_instruct=debug"));
+        .unwrap_or_else(|_| EnvFilter::new("info,julong_codex_keysmith=debug"));
 
     tracing_subscriber::registry()
         .with(env_filter)
@@ -46,7 +46,11 @@ pub fn init_logging(log_dir: &str) -> WorkerGuard {
         )
         .init();
 
-    tracing::info!("logging initialized: console + file ({}{})", log_dir, path_suffix(log_dir));
+    tracing::info!(
+        "logging initialized: console + file ({}{})",
+        log_dir,
+        path_suffix(log_dir)
+    );
     guard
 }
 

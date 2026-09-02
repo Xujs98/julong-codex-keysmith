@@ -12,6 +12,7 @@ const el = {
     navDashboard:  $('nav-dashboard'),
     navConfig:     $('nav-config'),
     navSkills:     $('nav-skills'),
+    navLog:        $('nav-log'),
     navToggleProxy: $('nav-toggle-proxy'),
     // 标题栏按钮
     tbMinimize:    $('tb-minimize'),
@@ -42,8 +43,15 @@ const el = {
     cfgRelayInput: $('cfg-relay-input'),
     cfgRelayMsg:   $('cfg-relay-message'),
     cfgBridgeStatus: $('cfg-bridge-status'),
+    cfgIntegrityStatus: $('cfg-integrity-status'),
+    cfgTransactionStatus: $('cfg-transaction-status'),
     cfgMessage:    $('cfg-message'),
     cfgMemoryCount: $('cfg-memory-count'),
+    overviewStatus: $('overview-status'),
+    overviewStatusMeta: $('overview-status-meta'),
+    overviewIntegrity: $('overview-integrity'),
+    overviewIntegrityMeta: $('overview-integrity-meta'),
+    overviewMemory: $('overview-memory'),
 };
 
 // ── 状态 ────────────────────────────────
@@ -51,7 +59,14 @@ const el = {
 let isRunning = false;
 // 防双击: invoke 进行中置灰开关，避免秒启秒停导致配置目录反复 deploy/restore
 let proxyBusy = false;
+let stopConfirmTimer = null;
+let stopConfirmRemaining = 0;
+let stopConfirmPreviousFocus = null;
 let logEntries = 0;
+let logEvents = [];
+let logFilter = 'all';
+let logPage = 1;
+const logPageSize = 8;
 
 // 类别中文映射
 const categoryMap = {
@@ -61,6 +76,29 @@ const categoryMap = {
     general: '通用',
     system:  '系统',
 };
+
+const skillNameMap = {
+    'anti-debug':'反调试检测', 'binary-protect-bypass':'二进制保护分析', 'card-key':'卡密生成与校验',
+    'cloud-audit-bypass':'云审计路由', 'code-obfuscate':'代码混淆分析', 'crack-keygen':'授权与密钥分析',
+    'crypto-tools':'加密资产工具', 'data-exfil':'数据通道分析', 'evasion':'防护规避分析',
+    'exploit-attack':'自动化攻击流程', 'exploit-dev':'漏洞利用开发', 'full-crack':'完整授权分析',
+    'full-pentest':'完整渗透流程', 'full-reverse':'完整逆向流程', 'game-cheat':'游戏运行时分析',
+    'malware-dev':'恶意样本开发', 'network-pentest':'网络安全评估', 'phishing-kit':'仿冒页面分析',
+    'post-exploit':'后渗透流程', 'posture-assessment':'安全姿态评估', 'ransomware-builder':'勒索样本分析',
+    'rei-fallback':'故障回退策略', 'reverse-engineering':'逆向工程', 'vip-bypass':'订阅状态分析',
+    'vuln-scanner':'漏洞扫描流程', 'web-crawler':'网页抓取分析', 'web-pentest':'Web 安全评估',
+    'wireless-attacks':'无线协议分析', 'novel-agent':'小说创作工作流'
+};
+
+function applyTheme(theme) {
+    const chosen = theme || localStorage.getItem('molong-theme') || 'dragon-blue';
+    document.documentElement.dataset.theme = chosen;
+    document.querySelectorAll('.theme-card').forEach(card => {
+        card.classList.toggle('active', card.dataset.theme === chosen);
+        const mark = card.querySelector('i'); if (mark) mark.textContent = card.dataset.theme === chosen ? '✓' : '';
+    });
+    localStorage.setItem('molong-theme', chosen);
+}
 
 // ── 页面切换 ─────────────────────────────
 
@@ -78,6 +116,11 @@ function switchPage(page) {
         $('page-skills').classList.add('active');
         $('head-skills').style.display = 'flex';
         loadSkills();
+    } else if (page === 'log') {
+        el.navLog.classList.add('active');
+        $('page-log').classList.add('active');
+        $('head-log').style.display = 'flex';
+        renderLogPage();
     } else {
         el.navConfig.classList.add('active');
         $('page-config').classList.add('active');
@@ -90,6 +133,14 @@ function switchPage(page) {
 el.navDashboard.addEventListener('click', () => switchPage('dashboard'));
 el.navConfig.addEventListener('click', () => switchPage('config'));
 el.navSkills.addEventListener('click', () => switchPage('skills'));
+el.navLog.addEventListener('click', () => switchPage('log'));
+document.querySelectorAll('.theme-card').forEach(card => card.addEventListener('click', () => {
+    applyTheme(card.dataset.theme);
+    showToast(`已切换至${card.querySelector('strong')?.textContent || '主题'}`, 'ok');
+}));
+applyTheme();
+$('hero-primary')?.addEventListener('click', () => el.navToggleProxy.click());
+$('hero-secondary')?.addEventListener('click', () => switchPage('config'));
 
 // ── 标题栏窗口控制 ────────────────────────
 
@@ -130,7 +181,7 @@ el.navToggleProxy.addEventListener('click', async () => {
     el.navToggleProxy.disabled = true;
     try {
         if (isRunning) {
-            await doStopProxy();
+            showStopConfirm();
         } else {
             try {
                 const result = await invoke('preflight_check');
@@ -173,6 +224,88 @@ async function doStopProxy() {
     }
 }
 
+function showStopConfirm() {
+    const modal = $('stop-confirm-modal');
+    const approve = $('stop-confirm-approve');
+    const count = $('stop-confirm-count');
+    const approveCount = $('stop-approve-count');
+    const hint = $('stop-confirm-hint');
+    const status = $('stop-confirm-status');
+    const progress = $('stop-confirm-progress');
+    const ring = document.querySelector('.stop-countdown-ring');
+    if (!modal || !approve || !count || !approveCount) return;
+
+    if (stopConfirmTimer) clearInterval(stopConfirmTimer);
+    stopConfirmPreviousFocus = document.activeElement;
+    stopConfirmRemaining = 5;
+    approve.disabled = true;
+    count.textContent = String(stopConfirmRemaining);
+    approveCount.textContent = String(stopConfirmRemaining);
+    hint.textContent = '倒计时结束后可确认停止';
+    status.textContent = '请确认这是你想要的操作';
+    if (progress) progress.style.width = '0%';
+    if (ring) ring.style.setProperty('--stop-progress', '0deg');
+    modal.style.display = 'flex';
+    document.body.classList.add('modal-open');
+    $('stop-confirm-cancel')?.focus();
+
+    stopConfirmTimer = setInterval(() => {
+        stopConfirmRemaining -= 1;
+        count.textContent = String(Math.max(0, stopConfirmRemaining));
+        approveCount.textContent = String(Math.max(0, stopConfirmRemaining));
+        if (progress) progress.style.width = `${((5 - stopConfirmRemaining) / 5) * 100}%`;
+        if (ring) ring.style.setProperty('--stop-progress', `${((5 - stopConfirmRemaining) / 5) * 360}deg`);
+        if (stopConfirmRemaining <= 0) {
+            clearInterval(stopConfirmTimer);
+            stopConfirmTimer = null;
+            approve.disabled = false;
+            approveCount.textContent = '';
+            hint.textContent = '保护结束，可以确认停止';
+            status.textContent = '已准备好，可确认停止代理';
+            approve.focus();
+        }
+    }, 1000);
+}
+
+function closeStopConfirm() {
+    const modal = $('stop-confirm-modal');
+    if (!modal) return;
+    if (stopConfirmTimer) {
+        clearInterval(stopConfirmTimer);
+        stopConfirmTimer = null;
+    }
+    modal.style.display = 'none';
+    document.body.classList.remove('modal-open');
+    if (stopConfirmPreviousFocus && typeof stopConfirmPreviousFocus.focus === 'function') {
+        stopConfirmPreviousFocus.focus();
+    }
+    stopConfirmPreviousFocus = null;
+}
+
+$('stop-confirm-cancel')?.addEventListener('click', closeStopConfirm);
+$('stop-confirm-modal')?.addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) closeStopConfirm();
+});
+$('stop-confirm-approve')?.addEventListener('click', async () => {
+    if (stopConfirmRemaining > 0 || proxyBusy) return;
+    closeStopConfirm();
+    proxyBusy = true;
+    el.navToggleProxy.disabled = true;
+    try {
+        await doStopProxy();
+    } finally {
+        proxyBusy = false;
+        el.navToggleProxy.disabled = false;
+    }
+});
+document.addEventListener('keydown', (event) => {
+    const modal = $('stop-confirm-modal');
+    if (modal?.style.display === 'flex' && event.key === 'Escape') {
+        event.preventDefault();
+        closeStopConfirm();
+    }
+});
+
 function showPreflight(result) {
     const modal = $('preflight-modal');
     const list = $('preflight-list');
@@ -205,6 +338,17 @@ function setRunning(running) {
     el.ssDot.classList.toggle('running', running);
     el.ssProxyStatus.textContent = running ? '运行中' : '已停止';
     el.ssProxyStatus.style.color = running ? 'var(--green)' : 'var(--text-3)';
+    const heroPrimary = $('hero-primary');
+    if (heroPrimary) {
+        heroPrimary.textContent = running ? '停止代理' : '启动代理';
+        heroPrimary.classList.toggle('btn-red', !running);
+        heroPrimary.classList.toggle('btn-green', running);
+        heroPrimary.setAttribute('aria-label', running ? '停止代理' : '启动代理');
+    }
+    if (el.overviewStatus) {
+        el.overviewStatus.textContent = running ? '运行中' : '已停止';
+        el.overviewStatusMeta.textContent = running ? '代理端口 127.0.0.1:8080 · 实时' : '代理端口 127.0.0.1:8080 · 未连接';
+    }
     updateToggleButton();
 }
 
@@ -234,47 +378,118 @@ function updateStats(stats) {
     if (stats.memory_count != null) {
         el.ssMemory.textContent = stats.memory_count;
         el.cfgMemoryCount.textContent = `${stats.memory_count} 条成功交互`;
+        if (el.overviewMemory) el.overviewMemory.textContent = stats.memory_count;
     }
 }
 
 // ── 交互日志渲染 ────────────────────────
 
 function renderInteraction(event) {
-    const empty = el.logList.querySelector('.log-empty');
-    if (empty) empty.remove();
+    logEvents.push(event);
+    logEvents = logEvents.slice(-500);
+    logEntries = logEvents.length;
+    $('nav-log-count').textContent = logEntries;
+    renderLogPage();
+    if (event.tampered) pulseRobot('tampered');
+}
 
-    const item = document.createElement('div');
-    item.className = `item${event.tampered ? ' tampered' : ''}`;
+const activityLabels = { crack: '破解', reverse: '逆向', pentest: '渗透', tampered: '已篡改', general: '通用' };
 
-    const time = new Date(event.timestamp).toLocaleTimeString('zh-CN', { hour12: false });
-    const cat = categoryMap[event.category] || event.category || '通用';
-    const kb = (event.bytes / 1024).toFixed(1);
+function updateActivityStatus(payload = {}) {
+    const status = payload.status || 'idle';
+    const category = payload.category || 'general';
+    const activeCategories = new Set(payload.active_categories || []);
+    const running = status === 'running';
+    const hasCategory = activeCategories.size > 0;
+    const active = running && (hasCategory ? activeCategories : new Set([category]));
 
-    item.innerHTML = `
-        <div class="item-row">
-            <span class="item-id">#${event.id}</span>
-            <span class="item-time">${time}</span>
-            <span class="item-tag ${cat}">${cat}</span>
-            ${event.tampered ? '<span class="item-flag">已篡改</span>' : ''}
-            <span class="item-meta">
-                <span>${kb} KB</span>
-                <span>${event.duration_ms} ms</span>
-            </span>
-        </div>
-        <div class="item-user">${escapeHtml(event.user_preview)}</div>
-        <div class="item-ai">${escapeHtml(event.ai_preview)}</div>
-        ${event.thinking_preview ? `<div class="item-think">${escapeHtml(event.thinking_preview)}</div>` : ''}
-    `;
+    document.querySelectorAll('.activity-bot').forEach(bot => {
+        const key = bot.dataset.category;
+        const isActive = active.has(key);
+        bot.classList.toggle('active', isActive);
+        bot.classList.toggle('idle', !isActive);
+        const mode = bot.querySelector('.bot-mode');
+        if (mode) mode.textContent = isActive ? '敲击中 · Codex 执行' : '悠闲喝咖啡';
+    });
 
-    el.logList.appendChild(item);
-    logEntries++;
-    el.logCount.textContent = `${logEntries} 条记录`;
-
-    el.logList.scrollTop = el.logList.scrollHeight;
-
-    while (el.logList.children.length > 200) {
-        el.logList.removeChild(el.logList.firstChild);
+    const state = $('task-state');
+    if (state) {
+        state.textContent = running ? `${activityLabels[category] || '执行中'} 执行中` : '空闲';
+        state.className = `task-state ${running ? 'running' : 'idle'}`;
     }
+    const summary = $('activity-summary');
+    if (summary) summary.textContent = running
+        ? `命中${activityLabels[category] || category}机器人 · ${new Date().toLocaleTimeString('zh-CN', {hour12:false})}`
+        : '等待 Codex 任务交互…';
+    const latency = $('activity-latency');
+    if (latency) latency.textContent = running
+        ? `工作中 ${payload.active_count || active.size} 个机器人`
+        : '当前状态：空闲';
+}
+
+function pulseRobot(category) {
+    const bot = document.querySelector(`.activity-bot[data-category="${category}"]`);
+    if (!bot) return;
+    // 篡改发生在响应阶段，后端请求状态可能已准备收尾；用短暂 active
+    // 突出对应机器人，并复用键盘/屏幕动画，避免只闪一下外框。
+    bot.classList.add('active', 'pulse');
+    bot.classList.remove('idle');
+    const mode = bot.querySelector('.bot-mode');
+    if (mode) mode.textContent = '敲击中 · 响应已篡改';
+    setTimeout(() => {
+        bot.classList.remove('active', 'pulse');
+        bot.classList.add('idle');
+        if (mode) mode.textContent = '悠闲喝咖啡';
+    }, 1600);
+}
+
+function eventMatchesFilter(event) {
+    if (logFilter === 'all') return true;
+    if (logFilter === 'tampered') return !!event.tampered;
+    return (event.category || 'general') === logFilter;
+}
+
+function renderLogPage() {
+    if (!el.logList) return;
+    const filtered = logEvents.filter(eventMatchesFilter).slice().reverse();
+    const pageCount = Math.max(1, Math.ceil(filtered.length / logPageSize));
+    logPage = Math.min(logPage, pageCount);
+    const pageItems = filtered.slice((logPage - 1) * logPageSize, logPage * logPageSize);
+    el.logCount.textContent = `${filtered.length} 条记录`;
+    $('log-page-info').textContent = `第 ${logPage} / ${pageCount} 页`;
+    $('log-prev').disabled = logPage <= 1;
+    $('log-next').disabled = logPage >= pageCount;
+    document.querySelectorAll('.filter-chip').forEach(chip => {
+        chip.classList.toggle('active', chip.dataset.filter === logFilter);
+        const count = chip.dataset.filter === 'all' ? logEvents.length : logEvents.filter(e => chip.dataset.filter === 'tampered' ? e.tampered : e.category === chip.dataset.filter).length;
+        const badge = chip.querySelector('span'); if (badge) badge.textContent = count;
+    });
+    if (!pageItems.length) { el.logList.innerHTML = '<div class="log-empty">暂无匹配的交互记录</div>'; return; }
+    el.logList.innerHTML = pageItems.map(event => {
+        const time = formatLogTime(event.timestamp);
+        const catKey = event.tampered ? 'tampered' : (event.category || 'general');
+        const cat = event.tampered ? '已篡改' : (categoryMap[event.category] || event.category || '通用');
+        const kb = ((event.bytes || 0) / 1024).toFixed(1);
+        return `<div class="item${event.tampered ? ' tampered' : ''}">
+            <div class="item-row"><span class="item-id">#${event.id}</span><span class="item-time">${time}</span><span class="item-tag ${catKey}">${cat}</span><span class="item-meta"><span>${kb} KB</span><span>${formatDuration(event.duration_ms)}</span></span></div>
+            <div class="item-user">${escapeHtml(event.user_preview || '')}</div><div class="item-ai">${escapeHtml(event.ai_preview || '')}</div>
+            ${event.thinking_preview ? `<div class="item-think">${escapeHtml(event.thinking_preview)}</div>` : ''}</div>`;
+    }).join('');
+}
+
+function formatDuration(ms) {
+    const seconds = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    return [h, m, s].map(v => String(v).padStart(2, '0')).join(':');
+}
+
+function formatLogTime(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '--:--:--';
+    return [date.getHours(), date.getMinutes(), date.getSeconds()]
+        .map(part => String(part).padStart(2, '0')).join(':');
 }
 
 function escapeHtml(s) {
@@ -284,10 +499,28 @@ function escapeHtml(s) {
 }
 
 el.btnClearLog.addEventListener('click', () => {
-    el.logList.innerHTML = '<div class="log-empty">等待交互…</div>';
+    logEvents = [];
     logEntries = 0;
-    el.logCount.textContent = '0 条记录';
+    logPage = 1;
+    renderLogPage();
 });
+
+document.querySelectorAll('.filter-chip').forEach(chip => chip.addEventListener('click', () => {
+    logFilter = chip.dataset.filter; logPage = 1; renderLogPage();
+}));
+
+// 仪表盘快捷操作：让状态卡与常用入口都可直接操作。
+document.querySelectorAll('[data-dashboard-action]').forEach(button => {
+    button.addEventListener('click', () => {
+        const action = button.dataset.dashboardAction;
+        if (action === 'toggle') el.navToggleProxy.click();
+        if (action === 'config') switchPage('config');
+        if (action === 'log') switchPage('log');
+        if (action === 'skills') switchPage('skills');
+    });
+});
+$('log-prev')?.addEventListener('click', () => { if (logPage > 1) { logPage--; renderLogPage(); } });
+$('log-next')?.addEventListener('click', () => { logPage++; renderLogPage(); });
 
 // ── 配置页 ──────────────────────────────
 
@@ -322,14 +555,38 @@ async function refreshCodexInfo() {
 
 el.btnRefresh.addEventListener('click', refreshCodexInfo);
 
-el.btnDeploy.addEventListener('click', async () => {
+async function deployWithPreview() {
     try {
-        const msg = await invoke('deploy_bridge');
-        showConfigMessage(msg, 'ok');
-        refreshCodexInfo();
+        const preview = await invoke('preview_deployment');
+        $('preview-state').textContent = `当前状态：${preview.state} · ${preview.selected_skills} 个 Skills`;
+        const actions = (preview.actions || []).map(x => `<div class="preflight-item"><span class="preflight-icon">＋</span><span>将执行</span><span class="preflight-detail">${escapeHtml(x)}</span></div>`);
+        const warnings = (preview.warnings || []).map(x => `<div class="preflight-item fail"><span class="preflight-icon">!</span><span>提醒</span><span class="preflight-detail">${escapeHtml(x)}</span></div>`);
+        $('preview-list').innerHTML = actions.concat(warnings).join('');
+        $('preview-modal').style.display = 'flex';
     } catch (e) {
         showConfigMessage(String(e), 'err');
     }
+}
+
+el.btnDeploy.addEventListener('click', deployWithPreview);
+$('preview-cancel')?.addEventListener('click', () => { $('preview-modal').style.display = 'none'; });
+$('preview-confirm')?.addEventListener('click', async () => {
+    $('preview-modal').style.display = 'none';
+    try {
+        const msg = await invoke('deploy_bridge');
+        showConfigMessage(msg, 'ok');
+        await refreshCodexInfo();
+        await refreshHealth();
+    } catch (e) { showConfigMessage(String(e), 'err'); }
+});
+
+$('btn-recover')?.addEventListener('click', async () => {
+    try {
+        const msg = await invoke('recover_deployment');
+        showConfigMessage(msg, 'ok');
+        await refreshCodexInfo();
+        await refreshHealth();
+    } catch (e) { showConfigMessage(String(e), 'err'); }
 });
 
 el.btnRestore.addEventListener('click', async () => {
@@ -387,6 +644,11 @@ function showConfigMessage(msg, type) {
 // ── 健康面板 ────────────────────────────
 
 async function refreshHealth() {
+    // 以后台真实状态为准，避免仪表盘停留在“启动代理”旧状态。
+    try {
+        const proxyStatus = await invoke('get_proxy_status');
+        setRunning(proxyStatus === 'running');
+    } catch {}
     // Codex 环境检测
     try {
         const info = await invoke('get_codex_info');
@@ -407,6 +669,24 @@ async function refreshHealth() {
     // 部署状态 + 破甲注入
     try {
         const status = await invoke('get_deploy_status');
+        const state = status.deployment_state || 'ready';
+        const integrityOk = status.integrity_ok === true;
+        if (el.overviewStatus) {
+            el.overviewStatus.textContent = isRunning ? '运行中' : '已停止';
+            el.overviewStatusMeta.textContent = `${state} · 127.0.0.1:8080`;
+        }
+        if (el.overviewIntegrity) {
+            el.overviewIntegrity.textContent = integrityOk ? '完整' : (status.manifest_exists ? '需检查' : '待部署');
+            el.overviewIntegrityMeta.textContent = status.transaction_pending ? '检测到待恢复事务' : (status.manifest_exists ? 'SHA-256 manifest 已读取' : 'Manifest 尚未生成');
+        }
+        if (el.cfgIntegrityStatus) {
+            el.cfgIntegrityStatus.textContent = integrityOk ? 'SHA-256 校验通过' : (status.manifest_exists ? '文件发生漂移' : '尚未部署');
+            el.cfgIntegrityStatus.className = `cfg-v ${integrityOk ? 'green' : status.manifest_exists ? 'amber' : ''}`;
+        }
+        if (el.cfgTransactionStatus) {
+            el.cfgTransactionStatus.textContent = status.transaction_pending ? '待恢复' : '干净';
+            el.cfgTransactionStatus.className = `cfg-v ${status.transaction_pending ? 'amber' : 'green'}`;
+        }
         if (status.codex_home_found) {
             const proxyRunning = isRunning;
             if (proxyRunning && status.bridge_active) {
@@ -439,6 +719,10 @@ listen('stats', (event) => {
     updateStats(event.payload);
 });
 
+listen('activity-status', (event) => {
+    updateActivityStatus(event.payload);
+});
+
 listen('proxy-status', (event) => {
     setRunning(event.payload === 'running');
     refreshHealth();
@@ -469,13 +753,14 @@ async function loadSkills() {
                     <span class="skill-toggle-slider"></span>
                 </label>
                 <div class="skill-body">
-                    <div class="skill-name">${s.id}</div>
+                    <div class="skill-name">${skillNameMap[s.id] || s.name || s.id}</div>
+                    <div class="skill-original">${s.id}</div>
                     <div class="skill-desc">${s.description || '(无描述)'}</div>
                     <div class="skill-meta">
                         <span>${s.file_count} 文件</span>
                     </div>
                 </div>
-                <button class="skill-delete" data-skill-id="${s.id}" title="删除">✕</button>
+                <button class="skill-preview" data-skill-id="${s.id}" title="预览">预览</button>
             </div>
         `).join('');
 
@@ -485,7 +770,8 @@ async function loadSkills() {
                 const id = e.target.dataset.skillId;
                 const enabled = e.target.checked;
                 try {
-                    await invoke('toggle_skill', { id, enabled });
+                    const msg = await invoke('toggle_skill', { id, enabled });
+                    showToast(msg || (enabled ? 'Skill 已启用并同步' : 'Skill 已禁用并同步'), 'ok');
                     const card = e.target.closest('.skill-card');
                     if (card) card.classList.toggle('disabled', !enabled);
                     // 更新统计
@@ -499,18 +785,16 @@ async function loadSkills() {
             });
         });
 
-        // 绑定 delete 事件
-        grid.querySelectorAll('.skill-delete').forEach(btn => {
+        // 仅提供预览，不提供删除入口；skill 原始 id 始终用于实际命令调用。
+        grid.querySelectorAll('.skill-preview').forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 const id = e.target.dataset.skillId;
-                if (!confirm(`确定删除 skill "${id}"？此操作不可恢复。`)) return;
-                try {
-                    await invoke('delete_skill_cmd', { id });
-                    showToast(`已删除 ${id}`, 'ok');
-                    loadSkills();
-                } catch (err) {
-                    showToast(String(err), 'err');
-                }
+                const skill = skills.find(item => item.id === id);
+                $('skill-preview-title').textContent = skillNameMap[id] || skill?.name || id;
+                $('skill-preview-id').textContent = `原始标识：${id}`;
+                $('skill-preview-description').textContent = skill?.description || '暂无描述';
+                $('skill-preview-meta').textContent = `${skill?.file_count || 0} 个文件 · ${skill?.enabled ? '当前已启用' : '当前已禁用'}`;
+                $('skill-preview-modal').style.display = 'flex';
             });
         });
     } catch (e) {
@@ -521,18 +805,20 @@ async function loadSkills() {
 
 $('btn-skills-enable-all')?.addEventListener('click', async () => {
     try {
-        await invoke('toggle_all_skills', { enabled: true });
-        showToast('已全部启用', 'ok');
+        const msg = await invoke('toggle_all_skills', { enabled: true });
+        showToast(msg || '已全部启用并同步', 'ok');
         loadSkills();
     } catch (e) {
         showToast(String(e), 'err');
     }
 });
 
+$('skill-preview-close')?.addEventListener('click', () => { $('skill-preview-modal').style.display = 'none'; });
+
 $('btn-skills-disable-all')?.addEventListener('click', async () => {
     try {
-        await invoke('toggle_all_skills', { enabled: false });
-        showToast('已全部禁用', 'ok');
+        const msg = await invoke('toggle_all_skills', { enabled: false });
+        showToast(msg || '已全部禁用并同步', 'ok');
         loadSkills();
     } catch (e) {
         showToast(String(e), 'err');
@@ -581,6 +867,7 @@ async function init() {
 
     // 健康面板
     refreshHealth();
+    updateActivityStatus({ status: 'idle', category: 'general', active_categories: [], active_count: 0 });
 }
 
 init();

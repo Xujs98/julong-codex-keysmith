@@ -1,0 +1,47 @@
+name: build
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  rust-check:
+    runs-on: macos-14
+    strategy:
+      matrix:
+        target: [x86_64-apple-darwin, aarch64-apple-darwin]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run copy-resources
+      - run: cargo fmt --all -- --check
+        working-directory: src-tauri
+      - run: cargo check --target ${{ matrix.target }}
+        working-directory: src-tauri
+      - run: cargo test
+        working-directory: src-tauri
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run copy-resources
+      - run: python3 -m json.tool src-tauri/tauri.conf.json >/dev/null
+      - run: python3 - <<'PY'
+import pathlib
+for path in [pathlib.Path('frontend/index.html'), pathlib.Path('frontend/styles.css'), pathlib.Path('frontend/app.js')]:
+    text = path.read_text()
+    assert text.strip(), path
+print('frontend assets present')
+PY

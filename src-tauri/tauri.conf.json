@@ -1,34 +1,38 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-config-schema/schema.json",
-  "productName": "Super-Instruct",
-  "version": "0.1.0",
+  "productName": "矩龙破甲",
+  "mainBinaryName": "矩龙破甲",
+  "version": "0.2.0",
   "identifier": "com.super-instruct.app",
   "build": {
     "beforeBuildCommand": "npm run copy-resources",
     "frontendDist": "../frontend"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
-        "title": "Super-Instruct",
-        "width": 960,
-        "height": 620,
-        "minWidth": 720,
-        "minHeight": 480,
+        "title": "矩龙破甲",
+        "width": 1180,
+        "height": 760,
+        "minWidth": 920,
+        "minHeight": 620,
         "resizable": true,
         "center": true,
-        "decorations": false
+        "decorations": false,
+        "transparent": true,
+        "shadow": true
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self' customprotocol: asset:; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'"
     },
     "withGlobalTauri": true
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi"],
+    "targets": "all",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -40,8 +44,14 @@
       "nsis": {
         "installerIcon": "icons/icon.ico",
         "displayLanguageSelector": false,
-        "languages": ["SimpChinese", "English"]
+        "languages": [
+          "SimpChinese",
+          "English"
+        ]
       }
+    },
+    "macOS": {
+      "minimumSystemVersion": "10.15"
     },
     "resources": {
       "resources/bridge.md": "bridge.md",

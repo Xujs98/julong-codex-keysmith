@@ -1,0 +1,4 @@
+interface:
+  display_name: Novel Agent
+  short_description: Structured fiction workspace for Codex
+  default_prompt: Use $novel-agent to plan, draft, revise, and persist a fiction project in local files.

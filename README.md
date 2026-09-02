@@ -1,6 +1,11 @@
-# Super-Instruct
+# 矩龙破甲
 
 OpenAI Codex CLI (GPT-5.6) MITM 破甲框架 — Rust + Tauri 桌面应用。
+
+> 本仓库是上游项目的二次开发版本，现由 **Xujs98** 在个人仓库中持续维护：
+> [Xujs98/julong-codex-keysmith](https://github.com/Xujs98/julong-codex-keysmith)。
+
+![矩龙破甲项目界面](docs/images/molong-dashboard.png)
 
 通过本地 MITM 代理拦截 Codex CLI 的 API 请求，在管道中执行注入、篡改、记忆和监控，配合 bridge.md 指令集实现竞赛沙箱模式。
 
@@ -72,6 +77,97 @@ npx tauri build
 
 产物输出到 `src-tauri/target/release/bundle/`。
 
+### macOS 构建
+
+需要在 macOS 上安装 Xcode Command Line Tools、Rust、Node.js 18+ 和 npm。构建脚本支持 Intel、Apple Silicon，以及同时兼容两种芯片的 Universal 应用：
+
+```bash
+# 分别构建 Intel 和 Apple Silicon 两套安装包
+./build-macos.sh all
+
+# 仅构建 Intel (x86_64)
+./build-macos.sh intel
+
+# 仅构建 Apple Silicon (arm64/M 系列)
+./build-macos.sh apple
+
+# 构建一个同时兼容 Intel 和 Apple Silicon 的 Universal 应用
+./build-macos.sh universal
+```
+
+产物位于以下目录：
+
+```text
+src-tauri/target/x86_64-apple-darwin/release/bundle/
+src-tauri/target/aarch64-apple-darwin/release/bundle/
+src-tauri/target/universal-apple-darwin/release/bundle/
+```
+
+本地构建会生成 `.app` 和 `.dmg`。若要分发给其他用户，还需要 Apple Developer ID 证书签名并完成 notarization；未签名版本只能由用户在系统安全设置中手动放行。
+
+### Windows 构建
+
+建议在 Windows 10/11 x64 环境构建。安装 Node.js 18+、Rust MSVC 工具链、Visual Studio Build Tools（Desktop development with C++）以及 WebView2 Runtime 后，在项目根目录执行：
+
+```powershell
+.\build-windows.cmd
+```
+
+参数用法与 `build-macos.sh` 类似：
+
+```powershell
+# x64，同时生成 NSIS 和 MSI
+.\build-windows.cmd all x64
+
+# x64，仅生成 EXE 安装包
+.\build-windows.cmd nsis x64
+
+# x64，仅生成 MSI
+.\build-windows.cmd msi x64
+
+# Windows ARM64
+.\build-windows.cmd all arm64
+```
+
+只生成 NSIS 安装包时执行：
+
+```powershell
+npx tauri build --bundles nsis
+```
+
+只生成 MSI 安装包时执行：
+
+```powershell
+npx tauri build --bundles msi
+```
+
+Windows 产物位于：
+
+```text
+src-tauri\\target\\release\\bundle\\nsis\\
+src-tauri\\target\\release\\bundle\\msi\\
+```
+
+当前配置中的 `macOSPrivateApi` 仅在 macOS 编译目标生效，不影响 Windows 构建。
+
+如果开发电脑是 macOS，可使用 `cargo-xwin` 在本机交叉编译，不需要提交代码，也不需要 GitHub Actions：
+
+```bash
+# 直接生成 Windows x64 可执行文件
+./build-windows.sh
+
+# Windows ARM64
+./build-windows.sh arm64
+```
+
+首次使用前安装交叉编译工具：
+
+```bash
+cargo install cargo-xwin
+```
+
+产物位于 `artifacts/windows-local/`，其中包含 `矩龙破甲.exe`、`bridge.md` 和 `codex-skills/`。
+
 ### 使用方式
 
 1. 启动应用后点击"启动代理"
@@ -80,12 +176,15 @@ npx tauri build
 4. 前端仪表盘实时显示交互流、篡改状态、统计
 5. 点击"停止代理"自动恢复 Codex 原始配置
 
+停止代理采用 5 秒确认保护弹窗：倒计时期间按钮锁定，结束后可选择“确认停止”或“继续运行”，支持 Esc 关闭弹窗。
+
 ## 项目结构
 
 ```
 Super-Instruct-Codex-5.6/
 ├── bridge.md                      # 破甲指令集（注入到 system role）
-├── codex-skills/                  # 28 个 Codex 技能模块（部署到 ~/.codex/skills/）
+├── codex-skills/                  # 29 个 Codex 技能模块（开关后即时同步到 ~/.codex/skills/）
+│   └── novel-agent/               # 小说创作 Skill：工具集 + 本地状态模块
 ├── frontend/
 │   ├── index.html                 # V3 浅色主题，无框窗口 + 自定义标题栏
 │   ├── styles.css                 # 类别色彩系统，960x620 紧凑布局
@@ -111,7 +210,9 @@ Super-Instruct-Codex-5.6/
 │           ├── sse_parser.rs       # M4: UniversalSseParser
 │           ├── tamper.rs          # M3: TamperEngine (22 条规则)
 │           ├── memory.rs         # M5: MemoryKernel
-│           └── monitor.rs         # M6: MonitorPanel (Tauri 事件推送)
+│           ├── monitor.rs         # M6: MonitorPanel (Tauri 事件推送)
+│           └── activity.rs        # Codex 请求分类与实时活动机器人状态
+│       └── transaction.rs         # 部署与 Skill 同步事务快照/恢复
 ├── .gitignore
 ├── LICENSE
 ├── package.json
@@ -125,6 +226,20 @@ Super-Instruct-Codex-5.6/
 | M3 TamperEngine | `modified_body.is_none()` | 已被其他拦截器修改则不重复篡改 |
 | M5 MemoryKernel | `modified_body.is_none() && reply.len() > 50` | 被篡改的响应不是成功交互 |
 | M6 MonitorPanel | 无门控 | 始终观察所有交互并推送到前端 |
+
+## Novel Agent Skill
+
+`codex-skills/novel-agent/` 不携带原项目 UI，所有能力通过 Codex 对话和本地文件完成。启用后，Skill 会即时复制到 `~/.codex/skills/novel-agent/`；关闭后恢复原有同名目录。
+
+状态保存在当前小说工作区的 `.novel-agent/`，包含项目设定、角色卡、世界书、场景快照、节拍、章节、摘要和交互选项。命令入口为：
+
+```bash
+python3 codex-skills/novel-agent/scripts/novel_agent.py --project PATH init --title "标题"
+python3 codex-skills/novel-agent/scripts/novel_agent.py --project PATH state
+python3 codex-skills/novel-agent/scripts/novel_agent.py --project PATH context recall --query "关键词"
+```
+
+Skills 管理页的开关会立即同步文件；代理启动时会再次校准，停止代理只恢复 `config.toml`/`bridge.md`，保留已启用的 Skills。
 
 ## 技术栈
 

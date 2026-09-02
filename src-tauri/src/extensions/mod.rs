@@ -1,3 +1,4 @@
+pub mod activity;
 pub mod inject;
 pub mod memory;
 pub mod monitor;

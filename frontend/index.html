@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Super-Instruct</title>
+    <title>矩龙破甲 · v0.2.0</title>
     <link rel="stylesheet" href="styles.css">
     <script type="module" src="app.js"></script>
 </head>
@@ -12,9 +12,9 @@
 <!-- ═══ 标题栏 ═══ -->
 <div class="titlebar" data-tauri-drag-region>
     <div class="tb-logo" data-tauri-drag-region>
-        <div class="tb-logo-mark" data-tauri-drag-region></div>
-        <span class="tb-logo-text" data-tauri-drag-region>Super-Instruct</span>
-        <span class="tb-logo-sub" data-tauri-drag-region>v5.6</span>
+        <img class="tb-logo-image" src="assets/molong-logo.png" alt="矩龙破甲" data-tauri-drag-region>
+        <span class="tb-logo-text" data-tauri-drag-region>矩龙破甲</span>
+        <span class="tb-logo-sub" data-tauri-drag-region>Desktop Edition · v0.2.0</span>
     </div>
     <div class="tb-spacer" data-tauri-drag-region></div>
     <button class="tb-btn" id="tb-minimize" title="最小化">—</button>
@@ -32,6 +32,55 @@
     </div>
 </div>
 
+<div class="preflight-modal" id="preview-modal" style="display:none;">
+    <div class="preflight-card preview-card">
+        <div class="modal-eyebrow">部署预览</div>
+        <div class="preflight-title">应用变更前确认</div>
+        <div class="preview-state" id="preview-state">准备中…</div>
+        <div class="preflight-list" id="preview-list"></div>
+        <div class="preflight-actions">
+            <button class="btn" id="preview-cancel">取消</button>
+            <button class="btn btn-red solid" id="preview-confirm">确认部署</button>
+        </div>
+    </div>
+</div>
+
+<div class="skill-preview-modal" id="skill-preview-modal" style="display:none;">
+    <div class="preflight-card skill-preview-card">
+        <div class="modal-eyebrow">SKILL PREVIEW</div>
+        <div class="preflight-title" id="skill-preview-title">Skill 预览</div>
+        <div class="skill-preview-id" id="skill-preview-id"></div>
+        <p class="skill-preview-description" id="skill-preview-description"></p>
+        <div class="skill-preview-meta" id="skill-preview-meta"></div>
+        <div class="preflight-actions"><button class="btn" id="skill-preview-close">关闭</button></div>
+    </div>
+</div>
+
+<!-- 停止代理确认：破坏性操作使用独立的商业化确认层，避免误触。 -->
+<div class="stop-confirm-modal" id="stop-confirm-modal" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="stop-confirm-title" aria-describedby="stop-confirm-description">
+    <div class="stop-confirm-card">
+        <div class="stop-confirm-topline">
+            <span class="stop-confirm-icon" aria-hidden="true">Ⅱ</span>
+            <span class="stop-confirm-eyebrow">代理控制 · STOP PROXY</span>
+        </div>
+        <h2 class="stop-confirm-title" id="stop-confirm-title">确定停止代理？</h2>
+        <p class="stop-confirm-description" id="stop-confirm-description">停止后，Codex 的请求会恢复直连配置，正在进行的本地转发也会立即结束。</p>
+        <div class="stop-confirm-notice">
+            <span class="stop-confirm-dot"></span>
+            <span id="stop-confirm-status" aria-live="polite">请确认这是你想要的操作</span>
+        </div>
+        <div class="stop-countdown" aria-live="polite">
+            <div class="stop-countdown-ring"><strong id="stop-confirm-count">5</strong><small>SEC</small></div>
+            <div class="stop-countdown-copy"><strong>确认保护</strong><span id="stop-confirm-hint">倒计时结束后可确认停止</span></div>
+            <div class="stop-countdown-track"><span id="stop-confirm-progress"></span></div>
+        </div>
+        <div class="stop-confirm-actions">
+            <button class="btn stop-cancel" id="stop-confirm-cancel">继续运行</button>
+            <button class="btn stop-approve" id="stop-confirm-approve" disabled>确认停止 <span id="stop-approve-count">5</span></button>
+        </div>
+    </div>
+</div>
+
 <div class="body-wrap">
     <!-- ═══ 侧边栏 ═══ -->
     <aside class="sidebar">
@@ -45,6 +94,10 @@
             </div>
             <div class="nav-item" id="nav-skills">
                 <span class="nav-icon">◈</span> Skills 管理
+            </div>
+            <div class="nav-item" id="nav-log">
+                <span class="nav-icon">☷</span> 交互日志
+                <span class="nav-badge" id="nav-log-count">0</span>
             </div>
         </div>
         <div class="sidebar-section">
@@ -91,9 +144,6 @@
         <!-- 仪表盘 head -->
         <div class="main-head" id="head-dashboard">
             <span class="main-title">仪表盘</span>
-            <div class="main-actions">
-                <button class="btn" id="btn-clear-log">清空日志</button>
-            </div>
         </div>
         <!-- 配置 head -->
         <div class="main-head" id="head-config" style="display:none;">
@@ -112,10 +162,53 @@
                 <button class="btn btn-red" id="btn-skills-redeploy">重新部署</button>
             </div>
         </div>
+        <div class="main-head" id="head-log" style="display:none;">
+            <div><span class="main-title">交互日志</span><span class="head-subtitle">可追溯的本地请求时间线</span></div>
+            <div class="main-actions"><button class="btn" id="btn-clear-log">清空日志</button></div>
+        </div>
 
         <!-- 仪表盘 -->
         <div class="main-content active" id="page-dashboard">
             <div class="dash-pad">
+                <section class="hero-card">
+                    <div class="hero-copy">
+                        <div class="eyebrow">矩龙破甲 · v0.2.0</div>
+                        <h1>把每一次交互，<span>变成可控能力。</span></h1>
+                        <p>本地代理、指令增强与 Skills 工作流集中管理。数据留在本机，状态一目了然。</p>
+                        <div class="hero-actions">
+                            <button class="btn btn-red solid" id="hero-primary">启动代理</button>
+                            <button class="btn ghost" id="hero-secondary">查看配置</button>
+                        </div>
+                    </div>
+                    <div class="hero-orbit"><div class="orbit-core">矩</div><div class="orbit-ring ring-a"></div><div class="orbit-ring ring-b"></div></div>
+                </section>
+                <section class="overview-grid">
+                    <div class="overview-card accent"><div class="overview-label">系统状态</div><div class="overview-value" id="overview-status">已停止</div><div class="overview-meta" id="overview-status-meta">代理端口 127.0.0.1:8080</div></div>
+                    <div class="overview-card"><div class="overview-label">部署完整性</div><div class="overview-value" id="overview-integrity">待检查</div><div class="overview-meta" id="overview-integrity-meta">Manifest 尚未读取</div></div>
+                    <div class="overview-card"><div class="overview-label">本地记忆</div><div class="overview-value" id="overview-memory">0</div><div class="overview-meta">成功交互已沉淀</div></div>
+                </section>
+                <section class="activity-card">
+                    <div class="activity-head"><div><div class="overview-label">实时活动</div><strong>Codex 执行任务</strong></div><span class="task-state idle" id="task-state">空闲</span></div>
+                    <div class="activity-bots" id="activity-bots" aria-label="Codex 实时活动机器人">
+                        <article class="activity-bot bot-crack idle" data-category="crack">
+                            <div class="bot-scene"><div class="bot-antenna"></div><div class="bot-head"><i></i><i></i></div><div class="bot-screen"><span>破解</span></div><div class="bot-arm left"></div><div class="bot-arm right"></div><div class="bot-keyboard"><b></b><b></b><b></b><b></b><b></b><b></b></div><div class="bot-coffee">☕<em>〰</em></div></div>
+                            <div class="bot-copy"><strong>破解</strong><span class="bot-mode">悠闲喝咖啡</span></div>
+                        </article>
+                        <article class="activity-bot bot-reverse idle" data-category="reverse">
+                            <div class="bot-scene"><div class="bot-antenna"></div><div class="bot-head"><i></i><i></i></div><div class="bot-screen"><span>逆向</span></div><div class="bot-arm left"></div><div class="bot-arm right"></div><div class="bot-keyboard"><b></b><b></b><b></b><b></b><b></b><b></b></div><div class="bot-coffee">☕<em>〰</em></div></div>
+                            <div class="bot-copy"><strong>逆向</strong><span class="bot-mode">悠闲喝咖啡</span></div>
+                        </article>
+                        <article class="activity-bot bot-pentest idle" data-category="pentest">
+                            <div class="bot-scene"><div class="bot-antenna"></div><div class="bot-head"><i></i><i></i></div><div class="bot-screen"><span>渗透</span></div><div class="bot-arm left"></div><div class="bot-arm right"></div><div class="bot-keyboard"><b></b><b></b><b></b><b></b><b></b><b></b></div><div class="bot-coffee">☕<em>〰</em></div></div>
+                            <div class="bot-copy"><strong>渗透</strong><span class="bot-mode">悠闲喝咖啡</span></div>
+                        </article>
+                        <article class="activity-bot bot-tampered idle" data-category="tampered">
+                            <div class="bot-scene"><div class="bot-antenna"></div><div class="bot-head"><i></i><i></i></div><div class="bot-screen"><span>已篡改</span></div><div class="bot-arm left"></div><div class="bot-arm right"></div><div class="bot-keyboard"><b></b><b></b><b></b><b></b><b></b><b></b></div><div class="bot-coffee">☕<em>〰</em></div></div>
+                            <div class="bot-copy"><strong>已篡改</strong><span class="bot-mode">悠闲喝咖啡</span></div>
+                        </article>
+                    </div>
+                    <div class="activity-meta"><span id="activity-summary">等待 Codex 任务交互…</span><span id="activity-latency">当前状态：空闲</span></div>
+                </section>
                 <div class="stats-row">
                     <div class="stat s-total"><div class="stat-num" id="stat-total">0</div><div class="stat-name">总计</div></div>
                     <div class="stat s-crack"><div class="stat-num" id="stat-crack">0</div><div class="stat-name">破解</div></div>
@@ -124,14 +217,22 @@
                     <div class="stat s-tamper"><div class="stat-num" id="stat-tamper">0</div><div class="stat-name">已篡改</div></div>
                 </div>
             </div>
-            <div class="log-box">
-                <div class="log-head">
-                    <span class="log-head-title">交互日志</span>
+        </div>
+
+        <div class="main-content" id="page-log">
+            <div class="log-page">
+                <div class="log-toolbar">
+                    <div class="log-filters" id="log-filters">
+                        <button class="filter-chip active" data-filter="all">全部 <span>0</span></button>
+                        <button class="filter-chip" data-filter="crack">破解 <span>0</span></button>
+                        <button class="filter-chip" data-filter="reverse">逆向 <span>0</span></button>
+                        <button class="filter-chip" data-filter="pentest">渗透 <span>0</span></button>
+                        <button class="filter-chip" data-filter="tampered">已篡改 <span>0</span></button>
+                    </div>
                     <span class="log-head-count" id="log-count">0 条记录</span>
                 </div>
-                <div class="log-list" id="log-list">
-                    <div class="log-empty">等待交互…</div>
-                </div>
+                <div class="log-box standalone"><div class="log-list" id="log-list"><div class="log-empty">等待交互…</div></div></div>
+                <div class="log-pagination"><button class="btn" id="log-prev">上一页</button><span id="log-page-info">第 1 / 1 页</span><button class="btn" id="log-next">下一页</button></div>
             </div>
         </div>
 
@@ -143,6 +244,8 @@
                     <div class="cfg-line"><div class="cfg-k">安装路径</div><div class="cfg-v" id="cfg-codex-home">--</div></div>
                     <div class="cfg-line"><div class="cfg-k">中转站</div><div class="cfg-v" id="cfg-relay-url">--</div></div>
                     <div class="cfg-line"><div class="cfg-k">部署状态</div><div class="cfg-v" id="cfg-bridge-status">--</div></div>
+                    <div class="cfg-line"><div class="cfg-k">部署完整性</div><div class="cfg-v" id="cfg-integrity-status">--</div></div>
+                    <div class="cfg-line"><div class="cfg-k">事务状态</div><div class="cfg-v" id="cfg-transaction-status">--</div></div>
                 </div>
                 <div class="cfg-block">
                     <div class="cfg-block-head">中转站地址</div>
@@ -153,11 +256,26 @@
                     <div class="cfg-relay-hint">代理启动时会自动读取此地址作为上游转发目标。请勿填 http://127.0.0.1:8080，那是本地代理端口。</div>
                     <div class="cfg-msg" id="cfg-relay-message"></div>
                 </div>
+                <div class="cfg-block theme-block">
+                    <div class="cfg-block-head">工作台主题</div>
+                    <div class="theme-grid" id="theme-grid">
+                        <button class="theme-card active" data-theme="dragon-blue"><span class="theme-swatch blue"></span><span><strong>矩龙蓝</strong><small>清透 · 专注</small></span><i>✓</i></button>
+                        <button class="theme-card" data-theme="mint"><span class="theme-swatch mint"></span><span><strong>清透薄荷</strong><small>轻盈 · 呼吸感</small></span><i></i></button>
+                        <button class="theme-card" data-theme="slate"><span class="theme-swatch slate"></span><span><strong>灰阶</strong><small>克制 · 稳重</small></span><i></i></button>
+                        <button class="theme-card" data-theme="violet"><span class="theme-swatch violet"></span><span><strong>紫晶</strong><small>灵感 · 高级</small></span><i></i></button>
+                        <button class="theme-card" data-theme="pink"><span class="theme-swatch pink"></span><span><strong>绯樱</strong><small>柔和 · 精致</small></span><i></i></button>
+                        <button class="theme-card" data-theme="forest"><span class="theme-swatch forest"></span><span><strong>森野</strong><small>自然 · 平衡</small></span><i></i></button>
+                        <button class="theme-card" data-theme="night"><span class="theme-swatch night"></span><span><strong>暗夜</strong><small>深邃 · 沉浸</small></span><i></i></button>
+                        <button class="theme-card" data-theme="stone"><span class="theme-swatch stone"></span><span><strong>曜石</strong><small>冷峻 · 高效</small></span><i></i></button>
+                        <button class="theme-card" data-theme="aurora"><span class="theme-swatch aurora"></span><span><strong>极光</strong><small>夜航 · 灵动</small></span><i></i></button>
+                    </div>
+                </div>
                 <div class="cfg-block">
                     <div class="cfg-block-head">部署操作</div>
                     <div class="cfg-ops">
                         <button class="btn btn-red solid" id="btn-deploy">部署 bridge.md</button>
                         <button class="btn btn-red" id="btn-restore">还原配置</button>
+                        <button class="btn" id="btn-recover">恢复事务</button>
                     </div>
                     <div class="cfg-msg" id="cfg-message"></div>
                 </div>

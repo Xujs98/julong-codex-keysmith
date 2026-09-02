@@ -1,6 +1,6 @@
 // MITM Core traits — three extension roles
 
-use crate::core::context::{RequestCtx, ResponseCtx, ParsedResponse};
+use crate::core::context::{ParsedResponse, RequestCtx, ResponseCtx};
 use bytes::Bytes;
 
 /// 请求拦截器：转发前修改请求体（注入系统提示词等）
@@ -24,15 +24,25 @@ pub trait ResponseInterceptor: Send + Sync {
 
 // Arc blanket impls — 允许共享扩展实例 between Core 和 Tauri commands
 impl<T: RequestInterceptor + ?Sized> RequestInterceptor for std::sync::Arc<T> {
-    fn name(&self) -> &'static str { (**self).name() }
-    fn intercept(&self, ctx: &mut RequestCtx) { (**self).intercept(ctx) }
+    fn name(&self) -> &'static str {
+        (**self).name()
+    }
+    fn intercept(&self, ctx: &mut RequestCtx) {
+        (**self).intercept(ctx)
+    }
 }
 
 impl<T: ResponseParser + ?Sized> ResponseParser for std::sync::Arc<T> {
-    fn parse(&self, body: &Bytes) -> ParsedResponse { (**self).parse(body) }
+    fn parse(&self, body: &Bytes) -> ParsedResponse {
+        (**self).parse(body)
+    }
 }
 
 impl<T: ResponseInterceptor + ?Sized> ResponseInterceptor for std::sync::Arc<T> {
-    fn name(&self) -> &'static str { (**self).name() }
-    fn intercept(&self, ctx: &mut ResponseCtx) { (**self).intercept(ctx) }
+    fn name(&self) -> &'static str {
+        (**self).name()
+    }
+    fn intercept(&self, ctx: &mut ResponseCtx) {
+        (**self).intercept(ctx)
+    }
 }

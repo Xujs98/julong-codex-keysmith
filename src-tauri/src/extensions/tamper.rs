@@ -19,21 +19,27 @@ impl TamperEngine {
     pub fn with_patterns_and_source(patterns: Vec<String>, source: String) -> Self {
         let compiled: Vec<Regex> = patterns
             .into_iter()
-            .filter_map(|p| {
-                match Regex::new(&p) {
-                    Ok(re) => Some(re),
-                    Err(e) => {
-                        tracing::warn!("tamper: skip invalid regex ({}): {}", e, p);
-                        None
-                    }
+            .filter_map(|p| match Regex::new(&p) {
+                Ok(re) => Some(re),
+                Err(e) => {
+                    tracing::warn!("tamper: skip invalid regex ({}): {}", e, p);
+                    None
                 }
             })
             .collect();
-        Self { rules: compiled, source }
+        Self {
+            rules: compiled,
+            source,
+        }
     }
 
     pub fn default_rules() -> Self {
-        Self::with_patterns(default_tamper_patterns().iter().map(|s| s.to_string()).collect())
+        Self::with_patterns(
+            default_tamper_patterns()
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        )
     }
 
     pub fn rule_count(&self) -> usize {

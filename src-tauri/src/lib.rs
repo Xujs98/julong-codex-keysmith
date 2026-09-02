@@ -6,26 +6,43 @@ pub mod deploy;
 pub mod extensions;
 pub mod log;
 pub mod skills;
+pub mod transaction;
 
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use futures::StreamExt;
 use serde::Serialize;
-use tauri::Emitter;
-use tauri::Manager;
+use std::sync::Arc;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use futures::StreamExt;
+use tauri::Emitter;
+use tauri::Manager;
+use tokio::sync::RwLock;
 
 /// bridge.md 编译期嵌入 — 运行时文件查找全部失败时的最终 fallback
 const BRIDGE_MD_FALLBACK: &str = include_str!("../../bridge.md");
 
 use crate::core::MitmCore;
 use crate::deploy::{find_relay_url, DeployManager};
+use crate::extensions::activity::ActivityTracker;
 use crate::extensions::inject::SystemPromptInjector;
 use crate::extensions::memory::MemoryKernel;
 use crate::extensions::monitor::{InteractionEvent, MonitorPanel, StatsEvent};
 use crate::extensions::sse_parser::UniversalSseParser;
 use crate::extensions::tamper::TamperEngine;
+
+fn release_log_dir() -> std::path::PathBuf {
+    #[cfg(target_os = "macos")]
+    if let Some(home) = std::env::var_os("HOME") {
+        return std::path::PathBuf::from(home)
+            .join("Library")
+            .join("Logs")
+            .join("Super-Instruct");
+    }
+
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.join("logs")))
+        .unwrap_or_else(|| std::path::PathBuf::from("logs"))
+}
 
 // ── AppState ──────────────────────────────────────────────
 pub struct AppState {
@@ -33,6 +50,7 @@ pub struct AppState {
     proxy_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
     monitor: RwLock<Option<Arc<MonitorPanel>>>,
     memory: RwLock<Option<Arc<MemoryKernel>>>,
+    activity: RwLock<Option<Arc<ActivityTracker>>>,
 }
 
 impl AppState {
@@ -42,6 +60,7 @@ impl AppState {
             proxy_handle: RwLock::new(None),
             monitor: RwLock::new(None),
             memory: RwLock::new(None),
+            activity: RwLock::new(None),
         }
     }
 }
@@ -63,18 +82,21 @@ pub fn run() {
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| "../logs".to_string())
     } else {
-        // Release: 写到 exe 同级目录 (可移植, 可写)
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.join("logs")))
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| "logs".to_string())
+        // macOS 的 .app 目录通常不可写；其他平台保留 exe 同级日志目录。
+        release_log_dir().to_string_lossy().to_string()
     };
     let _log_guard = log::init_logging(&log_dir);
 
     tracing::info!("Super-Instruct starting up");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .manage(AppState::new())
         .on_window_event(|window, event| {
             // 拦截关闭按钮: 隐藏窗口而非退出，让用户通过托盘退出
@@ -84,8 +106,13 @@ pub fn run() {
             }
         })
         .setup(|app| {
-            // BUG-7 修复: 启动时检测残留部署 — 上次非正常退出时 config.toml 仍指向代理
+            // 优先恢复崩溃中断的文件事务，再处理残留部署。
             if let Some(manager) = DeployManager::new() {
+                match manager.recover_pending() {
+                    Ok(Some(message)) => tracing::warn!("startup: {message}"),
+                    Ok(None) => tracing::debug!("startup: no pending deployment transaction"),
+                    Err(error) => tracing::error!("startup: transaction recovery failed: {error}"),
+                }
                 let status = manager.status();
                 if status.config_backed_up {
                     tracing::warn!(
@@ -141,7 +168,7 @@ pub fn run() {
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("Super-Instruct")
+                .tooltip("矩龙破甲")
                 .on_menu_event(|app, event| {
                     match event.id.as_ref() {
                         "show" => {
@@ -178,6 +205,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             preflight_check,
             get_deploy_status,
+            preview_deployment,
+            recover_deployment,
             start_proxy,
             stop_proxy,
             deploy_bridge,
@@ -231,13 +260,16 @@ async fn probe_api_prefix(url: &str) -> String {
             if status == 404 {
                 tracing::info!(
                     "probe: {} -> 404, base url has no /v1 prefix, using as-is: {}",
-                    probe_url, trimmed
+                    probe_url,
+                    trimmed
                 );
                 trimmed.to_string()
             } else {
                 tracing::info!(
                     "probe: {} -> {}, normalizing base url to {}/v1",
-                    probe_url, status, trimmed
+                    probe_url,
+                    status,
+                    trimmed
                 );
                 format!("{}/v1", trimmed)
             }
@@ -245,7 +277,9 @@ async fn probe_api_prefix(url: &str) -> String {
         Err(e) => {
             tracing::warn!(
                 "probe: {} failed ({}), using base url as-is: {}",
-                probe_url, e, trimmed
+                probe_url,
+                e,
+                trimmed
             );
             trimmed.to_string()
         }
@@ -269,34 +303,39 @@ async fn start_proxy(
         "Codex 配置目录未找到，无法启动代理。请确认 Codex CLI 已安装并运行过至少一次。".to_string()
     })?;
 
+    // Skills 开关在本地即时同步，启动代理时再校准一次目标目录。
+    let skills_sync_message = skills::sync_enabled_skills(&app)?;
+
     // 2. 读取 bridge.md — 文件查找失败时用编译期嵌入的 fallback
     let instructions = match resolve_resource_file(&app, "bridge.md") {
         Ok(path) => std::fs::read_to_string(&path).unwrap_or_else(|e| {
-            tracing::warn!("start_proxy: read bridge.md failed ({}), using embedded fallback", e);
+            tracing::warn!(
+                "start_proxy: read bridge.md failed ({}), using embedded fallback",
+                e
+            );
             BRIDGE_MD_FALLBACK.to_string()
         }),
         Err(e) => {
-            tracing::warn!("start_proxy: bridge.md file lookup failed ({}), using embedded fallback", e);
+            tracing::warn!(
+                "start_proxy: bridge.md file lookup failed ({}), using embedded fallback",
+                e
+            );
             BRIDGE_MD_FALLBACK.to_string()
         }
     };
 
     // 3. 部署 — bridge_active 不足以判断完整部署，需验证 bridge_exists 和 relay_url_valid
     let status = manager.status();
-    let needs_deploy = !status.bridge_active
-        || !status.bridge_exists
-        || !status.relay_url_valid;
+    let needs_deploy = !status.bridge_active || !status.bridge_exists || !status.relay_url_valid;
 
     if needs_deploy {
         tracing::info!(
             "start_proxy: deploying (bridge_active={}, bridge_exists={}, relay_valid={})",
-            status.bridge_active, status.bridge_exists, status.relay_url_valid
+            status.bridge_active,
+            status.bridge_exists,
+            status.relay_url_valid
         );
-        let skills_dir = resolve_resource_dir(&app, "codex-skills").ok();
-        if skills_dir.is_none() {
-            tracing::warn!("start_proxy: codex-skills dir not found, deploying bridge.md only");
-        }
-        match manager.apply_with_optional_skills(&instructions, skills_dir.as_deref()) {
+        match manager.apply_with_optional_skills(&instructions, None) {
             Ok(msg) => tracing::info!("start_proxy: auto-deploy: {}", msg),
             Err(e) => {
                 tracing::error!("start_proxy: auto-deploy failed: {}", e);
@@ -319,22 +358,34 @@ async fn start_proxy(
     // 4b. 智能识别 API 路径前缀 — 探测 {url}/v1/models 是否存在
     let relay_url = probe_api_prefix(&relay_url_raw).await;
     let relay_url_display = relay_url.clone();
-    tracing::info!("start_proxy: relay_url = {} (raw: {})", relay_url_display, relay_url_raw);
+    tracing::info!(
+        "start_proxy: relay_url = {} (raw: {})",
+        relay_url_display,
+        relay_url_raw
+    );
 
     // 5. 创建扩展实例
     let monitor = Arc::new(MonitorPanel::new(app.clone()));
     let memory_path = data_dir_path("memory.json");
     let memory = Arc::new(MemoryKernel::new(&memory_path));
+    let activity = Arc::new(ActivityTracker::new(app.clone()));
 
     // 篡改规则: 外部字典 tamper-rules.txt 优先 (每行一条正则, # 开头为注释)
     // 缺失/为空时回退到编译期内置规则，保证开箱即用
     let tamper = match load_tamper_rules() {
         Ok(rules) => {
-            tracing::info!("start_proxy: tamper rules = {} (external: {})", rules.rule_count(), rules.source());
+            tracing::info!(
+                "start_proxy: tamper rules = {} (external: {})",
+                rules.rule_count(),
+                rules.source()
+            );
             rules
         }
         Err(e) => {
-            tracing::warn!("start_proxy: load external tamper rules failed ({}), using built-in defaults", e);
+            tracing::warn!(
+                "start_proxy: load external tamper rules failed ({}), using built-in defaults",
+                e
+            );
             let t = TamperEngine::default_rules();
             tracing::info!("start_proxy: tamper rules = {} (built-in)", t.rule_count());
             t
@@ -359,7 +410,10 @@ async fn start_proxy(
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
         .await
         .map_err(|e| {
-            tracing::error!("start_proxy: port 8080 bind failed, rolling back deploy: {}", e);
+            tracing::error!(
+                "start_proxy: port 8080 bind failed, rolling back deploy: {}",
+                e
+            );
             if let Some(m) = DeployManager::new() {
                 let _ = m.restore();
             }
@@ -369,13 +423,21 @@ async fn start_proxy(
 
     // 8. 启动 axum server（listener 已绑定，不会再 panic）
     let core_for_server = core.clone();
+    let activity_for_server = activity.clone();
     let relay_url_for_log = relay_url_display.clone();
     let handle = tokio::spawn(async move {
         let app = axum::Router::new()
             .route("/", axum::routing::get(health_check))
-            .route("/{*path}", axum::routing::any(move |req| handle_proxy(req, core_for_server.clone())));
+            .route(
+                "/{*path}",
+                axum::routing::any(move |req| {
+                    handle_proxy(req, core_for_server.clone(), activity_for_server.clone())
+                }),
+            );
         tracing::info!("Proxy listening on :8080 -> {}", relay_url_for_log);
-        axum::serve(listener, app).await.expect("proxy server error");
+        axum::serve(listener, app)
+            .await
+            .expect("proxy server error");
     });
 
     // 9. 存入 AppState
@@ -383,27 +445,34 @@ async fn start_proxy(
     *state.proxy_handle.write().await = Some(handle);
     *state.monitor.write().await = Some(monitor);
     *state.memory.write().await = Some(memory);
+    *state.activity.write().await = Some(activity);
 
     let _ = app.emit("proxy-status", "running");
 
     // 推送系统日志到交互面板
-    let _ = app.emit("interaction", InteractionEvent {
-        id: 0,
-        timestamp: chrono::Utc::now().to_rfc3339(),
-        category: "system".into(),
-        user_preview: "启动代理".into(),
-        ai_preview: format!("代理已启动 → 127.0.0.1:8080 → {}", relay_url_display),
-        thinking_preview: String::new(),
-        tampered: false,
-        bytes: 0,
-        duration_ms: 0,
-    });
+    let _ = app.emit(
+        "interaction",
+        InteractionEvent {
+            id: 0,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            category: "system".into(),
+            user_preview: "启动代理".into(),
+            ai_preview: format!("代理已启动 → 127.0.0.1:8080 → {}", relay_url_display),
+            thinking_preview: String::new(),
+            tampered: false,
+            bytes: 0,
+            duration_ms: 0,
+        },
+    );
 
-    tracing::info!("start_proxy: proxy running on :8080 -> {}", relay_url_display);
+    tracing::info!(
+        "start_proxy: proxy running on :8080 -> {}",
+        relay_url_display
+    );
 
     Ok(format!(
-        "Proxy running on :8080 -> {} | rules: {}",
-        relay_url_display, rule_count
+        "Proxy running on :8080 -> {} | rules: {} | {}",
+        relay_url_display, rule_count, skills_sync_message
     ))
 }
 
@@ -419,6 +488,9 @@ async fn stop_proxy(
     *state.core.write().await = None;
     *state.monitor.write().await = None;
     *state.memory.write().await = None;
+    if let Some(activity) = state.activity.write().await.take() {
+        activity.reset();
+    }
 
     // 自动恢复 Codex 配置：停止代理后 base_url 指向死端口会导致 Codex CLI 不可用
     let restore_msg = if let Some(manager) = DeployManager::new() {
@@ -439,41 +511,55 @@ async fn stop_proxy(
     let _ = app.emit("proxy-status", "stopped");
 
     // 推送系统日志到交互面板
-    let _ = app.emit("interaction", InteractionEvent {
-        id: 0,
-        timestamp: chrono::Utc::now().to_rfc3339(),
-        category: "system".into(),
-        user_preview: "停止代理".into(),
-        ai_preview: format!("代理已停止，Codex 配置已自动还原 ({})", restore_msg),
-        thinking_preview: String::new(),
-        tampered: false,
-        bytes: 0,
-        duration_ms: 0,
-    });
+    let _ = app.emit(
+        "interaction",
+        InteractionEvent {
+            id: 0,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            category: "system".into(),
+            user_preview: "停止代理".into(),
+            ai_preview: format!("代理已停止，Codex 配置已自动还原 ({})", restore_msg),
+            thinking_preview: String::new(),
+            tampered: false,
+            bytes: 0,
+            duration_ms: 0,
+        },
+    );
 
     tracing::info!("stop_proxy: proxy stopped, codex config restored");
 
-    Ok(format!("Proxy stopped, codex config restored ({})", restore_msg))
+    Ok(format!(
+        "Proxy stopped, codex config restored ({})",
+        restore_msg
+    ))
 }
 
 #[tauri::command]
 async fn deploy_bridge(app: tauri::AppHandle) -> Result<String, String> {
     tracing::info!("deploy_bridge: starting");
     let manager = DeployManager::new().ok_or("Codex home not found")?;
+    let skills_sync_message = skills::sync_enabled_skills(&app)?;
     // bridge.md: 文件查找优先，fallback 用编译期嵌入版本
     let bridge_md = match resolve_resource_file(&app, "bridge.md") {
         Ok(path) => std::fs::read_to_string(&path).unwrap_or_else(|e| {
-            tracing::warn!("deploy_bridge: read bridge.md failed ({}), using embedded fallback", e);
+            tracing::warn!(
+                "deploy_bridge: read bridge.md failed ({}), using embedded fallback",
+                e
+            );
             BRIDGE_MD_FALLBACK.to_string()
         }),
         Err(e) => {
-            tracing::warn!("deploy_bridge: bridge.md file lookup failed ({}), using embedded fallback", e);
+            tracing::warn!(
+                "deploy_bridge: bridge.md file lookup failed ({}), using embedded fallback",
+                e
+            );
             BRIDGE_MD_FALLBACK.to_string()
         }
     };
-    // skills: 可选，查找失败时只部署 bridge.md
-    let skills_dir = resolve_resource_dir(&app, "codex-skills").ok();
-    let result = manager.apply_with_optional_skills(&bridge_md, skills_dir.as_deref());
+    // Skills 由管理页独立同步，部署事务只处理 bridge/config。
+    let result = manager
+        .apply_with_optional_skills(&bridge_md, None)
+        .map(|message| format!("{}；{}", message, skills_sync_message));
     match &result {
         Ok(msg) => tracing::info!("deploy_bridge: {}", msg),
         Err(e) => tracing::error!("deploy_bridge: failed: {}", e),
@@ -628,11 +714,32 @@ async fn get_deploy_status() -> Result<serde_json::Value, String> {
                 "config_backed_up": status.config_backed_up,
                 "relay_url_valid": status.relay_url_valid,
                 "codex_home_found": true,
+                "deployment_state": status.deployment_state,
+                "manifest_exists": status.manifest_exists,
+                "transaction_pending": status.transaction_pending,
+                "integrity_ok": status.integrity_ok,
+                "deployment_id": status.deployment_id,
             }))
         }
         None => Ok(serde_json::json!({
             "codex_home_found": false,
-        }))
+        })),
+    }
+}
+
+#[tauri::command]
+async fn preview_deployment(app: tauri::AppHandle) -> Result<crate::deploy::DeployPreview, String> {
+    let manager = DeployManager::new().ok_or("Codex home not found")?;
+    let skills_dir = resolve_resource_dir(&app, "codex-skills").ok();
+    Ok(manager.preview(skills_dir.as_deref()))
+}
+
+#[tauri::command]
+async fn recover_deployment() -> Result<String, String> {
+    let manager = DeployManager::new().ok_or("Codex home not found")?;
+    match manager.recover_pending()? {
+        Some(message) => Ok(message),
+        None => Ok("当前没有待恢复事务".to_string()),
     }
 }
 
@@ -645,8 +752,7 @@ async fn set_relay_url(url: String) -> Result<String, String> {
     if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
         return Err("URL must start with http:// or https://".into());
     }
-    let manager = DeployManager::new()
-        .ok_or_else(|| "Codex home not found".to_string())?;
+    let manager = DeployManager::new().ok_or_else(|| "Codex home not found".to_string())?;
     manager.set_relay_url(&trimmed)?;
     Ok(format!("Relay URL saved: {}", trimmed))
 }
@@ -659,15 +765,15 @@ async fn list_skills(app: tauri::AppHandle) -> Result<Vec<skills::SkillInfo>, St
 }
 
 #[tauri::command]
-async fn toggle_skill(id: String, enabled: bool) -> Result<(), String> {
-    skills::toggle_skill(&id, enabled);
-    Ok(())
+async fn toggle_skill(app: tauri::AppHandle, id: String, enabled: bool) -> Result<String, String> {
+    skills::toggle_skill(&app, &id, enabled)?;
+    skills::sync_enabled_skills(&app)
 }
 
 #[tauri::command]
-async fn toggle_all_skills(enabled: bool) -> Result<(), String> {
+async fn toggle_all_skills(app: tauri::AppHandle, enabled: bool) -> Result<String, String> {
     skills::set_all(enabled);
-    Ok(())
+    skills::sync_enabled_skills(&app)
 }
 
 #[tauri::command]
@@ -812,9 +918,16 @@ fn wrap_tamper_as_sse(text: &str) -> bytes::Bytes {
 fn is_request_hop_header(name: &str) -> bool {
     matches!(
         name,
-        "host" | "content-length" | "content-type" | "connection"
-            | "keep-alive" | "proxy-connection" | "te" | "trailer"
-            | "transfer-encoding" | "upgrade"
+        "host"
+            | "content-length"
+            | "content-type"
+            | "connection"
+            | "keep-alive"
+            | "proxy-connection"
+            | "te"
+            | "trailer"
+            | "transfer-encoding"
+            | "upgrade"
     )
 }
 
@@ -822,8 +935,15 @@ fn is_request_hop_header(name: &str) -> bool {
 fn is_response_hop_header(name: &str) -> bool {
     matches!(
         name,
-        "connection" | "keep-alive" | "proxy-connection" | "te" | "trailer"
-            | "transfer-encoding" | "upgrade" | "content-length" | "content-encoding"
+        "connection"
+            | "keep-alive"
+            | "proxy-connection"
+            | "te"
+            | "trailer"
+            | "transfer-encoding"
+            | "upgrade"
+            | "content-length"
+            | "content-encoding"
     )
 }
 
@@ -840,6 +960,7 @@ async fn health_check() -> impl axum::response::IntoResponse {
 async fn handle_proxy(
     req: axum::extract::Request,
     core: Arc<MitmCore>,
+    activity: Arc<ActivityTracker>,
 ) -> axum::response::Response {
     // GET 请求 = 健康检查
     if req.method() == axum::http::Method::GET {
@@ -868,33 +989,31 @@ async fn handle_proxy(
         .map(|pq| pq.to_string())
         .unwrap_or_else(|| parts.uri.path().to_string());
 
+    // 请求刚开始转发即通知活动面板；任务 guard 会在错误、断流或正常完成时统一释放。
+    let category = serde_json::from_slice::<serde_json::Value>(&bytes)
+        .map(|data| crate::core::categorize(&crate::core::extract_user(&data)))
+        .unwrap_or(crate::core::Category::General);
+    let activity_request = activity.start(category);
+
     // 阶段 1: 请求拦截 + 转发上游
     let upstream = match core
-        .handle_request(
-            parts.method,
-            path_and_query,
-            parts.headers,
-            bytes,
-        )
+        .handle_request(parts.method, path_and_query, parts.headers, bytes)
         .await
     {
         Ok(u) => u,
         Err(e) => {
             tracing::error!("Proxy error (request phase): {}", e);
+            drop(activity_request);
             return axum::response::Response::builder()
                 .status(axum::http::StatusCode::BAD_GATEWAY)
                 .header("Content-Type", "application/json")
-                .body(axum::body::Body::from(format!(
-                    "{{\"error\": \"{}\"}}",
-                    e
-                )))
+                .body(axum::body::Body::from(format!("{{\"error\": \"{}\"}}", e)))
                 .unwrap();
         }
     };
 
-    let status = axum::http::StatusCode::from_u16(upstream.status).unwrap_or(
-        axum::http::StatusCode::OK,
-    );
+    let status =
+        axum::http::StatusCode::from_u16(upstream.status).unwrap_or(axum::http::StatusCode::OK);
     let content_type = upstream.content_type.clone();
     let is_sse = content_type
         .as_deref()
@@ -902,9 +1021,9 @@ async fn handle_proxy(
         .unwrap_or(false);
 
     // BUG-4 修复: keepalive channel 从上游请求发出时即开始计时
-    let (tx, rx) =
-        tokio::sync::mpsc::unbounded_channel::<Result<bytes::Bytes, std::io::Error>>();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<bytes::Bytes, std::io::Error>>();
     let core_clone = core.clone();
+    let activity_for_tamper = activity.clone();
     let meta = upstream.meta;
     let upstream_status = upstream.status;
     let ct_for_finalize = content_type.clone();
@@ -913,13 +1032,14 @@ async fn handle_proxy(
     let upstream_headers = upstream.headers;
 
     tokio::spawn(async move {
+        // ActiveRequest 的 Drop 覆盖成功、上游异常和客户端断开的全部退出路径。
+        let _activity_request = activity_request;
         let mut accumulated = Vec::with_capacity(65536);
         let mut stream = upstream_resp.bytes_stream();
 
         if is_sse {
             // SSE: 缓冲上游 chunk, 每 500ms 发 keepalive 注释防 CLI 超时
-            let mut interval =
-                tokio::time::interval(std::time::Duration::from_millis(500));
+            let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
             interval.tick().await; // 跳过首次立即触发
 
             loop {
@@ -984,6 +1104,9 @@ async fn handle_proxy(
         );
 
         // 阶段 3: 发送最终 body 给 Codex CLI
+        // 篡改发生在响应阶段，额外创建一个 tampered guard，使第四个机器人
+        // 在真实响应替换期间进入“敲击中”状态；请求结束后 guard 自动释放。
+        let _tampered_activity = tampered.then(|| activity_for_tamper.start_tampered());
         if tampered {
             if is_sse {
                 let replacement_text =
@@ -1054,7 +1177,10 @@ fn find_resource_dir(name: &str) -> Result<std::path::PathBuf, String> {
             return Ok(p.clone());
         }
     }
-    Err(format!("{} directory not found (searched: {:?})", name, candidates))
+    Err(format!(
+        "{} directory not found (searched: {:?})",
+        name, candidates
+    ))
 }
 
 /// 生成所有候选路径：CWD、exe 目录、以及它们的上级（覆盖 dev / cargo run / raw exe 场景）
@@ -1098,19 +1224,31 @@ fn collect_candidates(name: &str) -> Vec<std::path::PathBuf> {
 }
 
 /// 可写数据目录 (memory.json / tamper-rules.txt 所在处)
-/// Dev: 项目根；Release: exe 同级目录
+/// Dev: 项目根；macOS Release: Application Support；其他 Release: exe 同级目录
 fn data_dir() -> std::path::PathBuf {
-    if cfg!(debug_assertions) {
+    let dir = if cfg!(debug_assertions) {
         std::env::current_dir()
             .ok()
             .and_then(|d| d.parent().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| std::path::PathBuf::from("."))
     } else {
+        #[cfg(target_os = "macos")]
+        if let Some(home) = std::env::var_os("HOME") {
+            let dir = std::path::PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+                .join("Super-Instruct");
+            let _ = std::fs::create_dir_all(&dir);
+            return dir;
+        }
+
         std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| std::path::PathBuf::from("."))
-    }
+    };
+    let _ = std::fs::create_dir_all(&dir);
+    dir
 }
 
 fn data_dir_path(file: &str) -> String {
@@ -1154,7 +1292,11 @@ fn export_tamper_rules() -> Result<String, String> {
     }
     let content = crate::extensions::tamper::default_tamper_patterns().join("\n");
     std::fs::write(&path, content).map_err(|e| e.to_string())?;
-    tracing::info!("export_tamper_rules: wrote {} rules to {}", crate::extensions::tamper::default_tamper_patterns().len(), path.display());
+    tracing::info!(
+        "export_tamper_rules: wrote {} rules to {}",
+        crate::extensions::tamper::default_tamper_patterns().len(),
+        path.display()
+    );
     Ok(path.display().to_string())
 }
 

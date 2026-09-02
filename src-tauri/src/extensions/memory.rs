@@ -67,7 +67,10 @@ impl ResponseInterceptor for MemoryKernel {
             return;
         }
         if ctx.parsed.reply.len() <= 50 {
-            tracing::trace!("memory: skipped (reply too short: {} chars)", ctx.parsed.reply.len());
+            tracing::trace!(
+                "memory: skipped (reply too short: {} chars)",
+                ctx.parsed.reply.len()
+            );
             return;
         }
 
