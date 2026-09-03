@@ -23,7 +23,7 @@ const BRIDGE_MD_FALLBACK: &str = include_str!("../../bridge.md");
 
 use crate::core::MitmCore;
 use crate::deploy::{find_relay_url, DeployManager};
-use crate::extensions::activity::ActivityTracker;
+use crate::extensions::activity::{ActivityStatus, ActivityTracker};
 use crate::extensions::inject::SystemPromptInjector;
 use crate::extensions::memory::MemoryKernel;
 use crate::extensions::monitor::{InteractionEvent, MonitorPanel, StatsEvent};
@@ -217,6 +217,7 @@ pub fn run() {
             get_stats,
             get_history,
             get_proxy_status,
+            get_activity_status,
             get_codex_info,
             set_relay_url,
             get_tamper_rules,
@@ -640,6 +641,15 @@ async fn get_proxy_status(state: tauri::State<'_, AppState>) -> Result<String, S
     } else {
         Ok("stopped".into())
     }
+}
+
+#[tauri::command]
+async fn get_activity_status(state: tauri::State<'_, AppState>) -> Result<ActivityStatus, String> {
+    let activity = state.activity.read().await;
+    Ok(activity
+        .as_ref()
+        .map(|tracker| tracker.snapshot())
+        .unwrap_or_else(ActivityStatus::idle))
 }
 
 #[tauri::command]
@@ -1147,6 +1157,79 @@ fn activity_command(
     )
 }
 
+/// SSE 服务可能在发送终止事件后继续保持 HTTP 连接。检测到协议终止标记后，
+/// 立即结束本次活动，避免 Codex 已完成而仪表盘仍显示“执行中”。
+fn sse_stream_complete(buffer: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(buffer);
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed == "data: [DONE]" || trimmed == "data:[DONE]" {
+            return true;
+        }
+        if trimmed.eq_ignore_ascii_case("event: response.completed")
+            || trimmed.eq_ignore_ascii_case("event: response.done")
+        {
+            return true;
+        }
+        let Some(data) = trimmed.strip_prefix("data:") else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(data.trim()) else {
+            continue;
+        };
+        let event_type = value
+            .get("type")
+            .and_then(|item| item.as_str())
+            .unwrap_or("");
+        if event_type.eq_ignore_ascii_case("response.completed")
+            || event_type.eq_ignore_ascii_case("response.done")
+            || value
+                .get("status")
+                .and_then(|item| item.as_str())
+                .map(|status| {
+                    status.eq_ignore_ascii_case("completed") || status.eq_ignore_ascii_case("done")
+                })
+                .unwrap_or(false)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod activity_status_tests {
+    use super::sse_stream_complete;
+
+    #[test]
+    fn detects_standard_sse_done_marker() {
+        assert!(sse_stream_complete(
+            b"data: {\"delta\":\"ok\"}\n\ndata: [DONE]\n\n"
+        ));
+    }
+
+    #[test]
+    fn detects_responses_completed_event() {
+        assert!(sse_stream_complete(
+            b"data: {\"type\":\"response.completed\"}\n\n"
+        ));
+    }
+
+    #[test]
+    fn detects_event_name_completion_marker() {
+        assert!(sse_stream_complete(
+            b"event: response.completed\ndata: {}\n\n"
+        ));
+    }
+
+    #[test]
+    fn ignores_partial_or_unrelated_sse_events() {
+        assert!(!sse_stream_complete(
+            b"data: {\"type\":\"response.output_text.delta\"}\n\n"
+        ));
+    }
+}
+
 async fn handle_proxy(
     req: axum::extract::Request,
     core: Arc<MitmCore>,
@@ -1187,6 +1270,7 @@ async fn handle_proxy(
     let category = serde_json::from_slice::<serde_json::Value>(&bytes)
         .map(|data| crate::core::categorize(&crate::core::extract_user(&data)))
         .unwrap_or(crate::core::Category::General);
+    let category_label = category.to_string();
     let command = activity_command(&category, method.as_str(), &path_and_query);
     let activity_request = activity.start_with_command(category, command);
     let headers = parts.headers.clone();
@@ -1231,6 +1315,7 @@ async fn handle_proxy(
             }
         }
     };
+    activity.update_phase(&category_label, "读取响应", 30);
 
     let status =
         axum::http::StatusCode::from_u16(upstream.status).unwrap_or(axum::http::StatusCode::OK);
@@ -1244,6 +1329,8 @@ async fn handle_proxy(
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<bytes::Bytes, std::io::Error>>();
     let core_clone = core.clone();
     let activity_for_tamper = activity.clone();
+    let activity_for_progress = activity.clone();
+    let activity_category = category_label.clone();
     let meta = upstream.meta;
     let upstream_status = upstream.status;
     if upstream_status == 401
@@ -1273,9 +1360,18 @@ async fn handle_proxy(
                 tokio::select! {
                     chunk_result = stream.next() => {
                         match chunk_result {
-                            Some(Ok(chunk)) => accumulated.extend_from_slice(&chunk),
+                            Some(Ok(chunk)) => {
+                                accumulated.extend_from_slice(&chunk);
+                                let progress = 36u8
+                                    .saturating_add((accumulated.len() / 4096).min(50) as u8);
+                                activity_for_progress.update_phase(&activity_category, "流式处理", progress);
+                                if sse_stream_complete(&accumulated) {
+                                    break;
+                                }
+                            }
                             Some(Err(e)) => {
                                 tracing::warn!("upstream stream error: {}", e);
+                                activity_for_progress.update_phase(&activity_category, "上游断开", 82);
                                 break;
                             }
                             None => break,
@@ -1295,9 +1391,19 @@ async fn handle_proxy(
             // 非 SSE: 直接缓冲, 无 keepalive
             while let Some(chunk_result) = stream.next().await {
                 match chunk_result {
-                    Ok(chunk) => accumulated.extend_from_slice(&chunk),
+                    Ok(chunk) => {
+                        accumulated.extend_from_slice(&chunk);
+                        let progress =
+                            36u8.saturating_add((accumulated.len() / 4096).min(50) as u8);
+                        activity_for_progress.update_phase(
+                            &activity_category,
+                            "读取响应",
+                            progress,
+                        );
+                    }
                     Err(e) => {
                         tracing::warn!("upstream stream error: {}", e);
+                        activity_for_progress.update_phase(&activity_category, "上游断开", 82);
                         break;
                     }
                 }
@@ -1305,6 +1411,7 @@ async fn handle_proxy(
         }
 
         let accumulated_bytes = bytes::Bytes::from(accumulated);
+        activity_for_progress.update_phase(&activity_category, "解析响应", 92);
 
         // BUG-6 修复: duration_ms 从请求到达时开始计算（含上游等待 + body streaming）
         let duration_ms = meta
@@ -1334,6 +1441,7 @@ async fn handle_proxy(
         // 篡改发生在响应阶段，额外创建一个 tampered guard，使第四个机器人
         // 在真实响应替换期间进入“敲击中”状态；请求结束后 guard 自动释放。
         let _tampered_activity = tampered.then(|| activity_for_tamper.start_tampered());
+        activity_for_progress.update_phase(&activity_category, "交付 Codex", 97);
         if tampered {
             if is_sse {
                 let replacement_text =

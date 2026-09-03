@@ -468,12 +468,19 @@ const activityFallbackCommands = {
     tampered: '$ mutate --response --rules active',
     general: '$ execute-task --target active',
 };
+let activityLastEventAt = Date.now();
 
-function setBotActivityScreen(bot, active, command = '') {
+function formatActivityElapsed(ms) {
+    const seconds = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+    return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, '0')}s`;
+}
+
+function setBotActivityScreen(bot, active, command = '', task = null) {
     const title = bot.querySelector('.bot-screen-title');
     const commandNode = bot.querySelector('.bot-command');
     const cursor = bot.querySelector('.bot-cursor');
-    if (!title || !commandNode || !cursor) return;
+    const progressNode = bot.querySelector('.bot-progress');
+    if (!title || !commandNode || !cursor || !progressNode) return;
 
     if (active) {
         const nextCommand = command || activityFallbackCommands[bot.dataset.category] || activityFallbackCommands.general;
@@ -486,23 +493,31 @@ function setBotActivityScreen(bot, active, command = '') {
         commandNode.hidden = false;
         cursor.hidden = false;
         title.hidden = true;
+        const progress = Math.max(0, Math.min(99, Number(task?.progress ?? 0)));
+        const phase = task?.phase || '执行中';
+        progressNode.textContent = `${phase} · ${progress}% · ${formatActivityElapsed(task?.elapsed_ms)}`;
+        progressNode.hidden = false;
     } else {
         commandNode.textContent = '';
         commandNode.classList.remove('command-enter');
         commandNode.hidden = true;
         cursor.hidden = true;
+        progressNode.textContent = '';
+        progressNode.hidden = true;
         title.hidden = false;
     }
 }
 
 function updateActivityStatus(payload = {}) {
+    activityLastEventAt = Date.now();
     const status = payload.status || 'idle';
     const category = payload.category || 'general';
     const activeCategories = new Set(Array.isArray(payload.active_categories) ? payload.active_categories : []);
     const commands = payload.commands && typeof payload.commands === 'object' ? payload.commands : {};
+    const tasks = payload.tasks && typeof payload.tasks === 'object' ? payload.tasks : {};
     const running = status === 'running';
     const hasCategory = activeCategories.size > 0;
-    const active = running && (hasCategory ? activeCategories : new Set([category]));
+    const active = running && hasCategory ? activeCategories : new Set();
 
     document.querySelectorAll('.activity-bot').forEach(bot => {
         const key = bot.dataset.category;
@@ -513,8 +528,10 @@ function updateActivityStatus(payload = {}) {
         const mode = bot.querySelector('.bot-mode');
         if (mode) mode.textContent = isActive ? '敲击中 · Codex 执行' : '悠闲喝咖啡';
         const command = commands[key] || (key === category ? payload.command : '');
+        const task = tasks[key] || null;
         bot.dataset.activityCommand = command || activityFallbackCommands[key] || activityFallbackCommands.general;
-        setBotActivityScreen(bot, isActive, command);
+        setBotActivityScreen(bot, isActive, command, task);
+        if (mode && isActive && task) mode.textContent = `${task.phase || '执行中'} · ${Math.max(0, Math.min(99, Number(task.progress ?? 0)))}%`;
     });
 
     const state = $('task-state');
@@ -532,6 +549,15 @@ function updateActivityStatus(payload = {}) {
         : '当前状态：空闲';
 }
 
+// 后端会在任务期间每 500ms 推送心跳；超过 3 秒没有任何状态事件时，
+// 视为窗口与代理状态暂时失联，主动恢复空闲，避免残留“工作中”视觉状态。
+setInterval(() => {
+    const hasActiveBot = document.querySelector('.activity-bot.active');
+    if (hasActiveBot && Date.now() - activityLastEventAt > 3000) {
+        updateActivityStatus({ status: 'idle', category: 'general', active_categories: [], active_count: 0 });
+    }
+}, 1000);
+
 function pulseRobot(category) {
     const bot = document.querySelector(`.activity-bot[data-category="${category}"]`);
     if (!bot) return;
@@ -539,14 +565,15 @@ function pulseRobot(category) {
     // 突出对应机器人，并复用键盘/屏幕动画，避免只闪一下外框。
     bot.classList.add('active', 'pulse');
     bot.classList.remove('idle');
+    bot.dataset.activityActive = bot.dataset.activityActive || 'false';
     const mode = bot.querySelector('.bot-mode');
     if (mode) mode.textContent = '敲击中 · 响应已篡改';
-    setBotActivityScreen(bot, true, activityFallbackCommands[category]);
+    setBotActivityScreen(bot, true, activityFallbackCommands[category], { phase: '响应已篡改', progress: 88, elapsed_ms: 0 });
     setTimeout(() => {
         bot.classList.remove('pulse');
         if (bot.dataset.activityActive === 'true') {
             if (mode) mode.textContent = '敲击中 · Codex 执行';
-            setBotActivityScreen(bot, true, bot.dataset.activityCommand);
+            setBotActivityScreen(bot, true, bot.dataset.activityCommand, { phase: '执行中', progress: 88, elapsed_ms: 0 });
             return;
         }
         bot.classList.remove('active');
@@ -818,6 +845,9 @@ listen('activity-status', (event) => {
 
 listen('proxy-status', (event) => {
     setRunning(event.payload === 'running');
+    if (event.payload !== 'running') {
+        updateActivityStatus({ status: 'idle', category: 'general', active_categories: [], active_count: 0 });
+    }
     refreshHealth();
 });
 
@@ -1163,6 +1193,8 @@ $('btn-skills-redeploy')?.addEventListener('click', async () => {
 // ── 初始化 ─────────────────────────────
 
 async function init() {
+    let activityStatus = null;
+
     // 检查代理状态
     try {
         const status = await invoke('get_proxy_status');
@@ -1191,9 +1223,16 @@ async function init() {
         // 忽略
     }
 
+    // 读取当前活动快照，避免窗口重载后丢失正在执行的任务状态。
+    try {
+        activityStatus = await invoke('get_activity_status');
+    } catch {
+        // 旧版本后端没有该命令时回退为空闲状态
+    }
+
     // 健康面板
     refreshHealth();
-    updateActivityStatus({ status: 'idle', category: 'general', active_categories: [], active_count: 0 });
+    updateActivityStatus(activityStatus || { status: 'idle', category: 'general', active_categories: [], active_count: 0 });
 }
 
 init();
