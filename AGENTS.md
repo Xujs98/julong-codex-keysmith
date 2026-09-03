@@ -31,3 +31,12 @@
 - CLI 与 Tauri 桌面端共享同一套部署、恢复、端口和状态逻辑，避免双重实现造成状态不一致。
 - 同步更新 macOS、Windows 的 CLI 安装与使用说明，并为 `start`、`stop`、`status` 增加可重复执行的验证记录。
 - CLI 功能完成后由用户自行运行 macOS/Windows 构建；代理执行任务期间不主动重新打包 App。
+
+## macOS / Windows 双平台适配
+
+- 所有功能、修复和重构都必须同时考虑 macOS 与 Windows，保持同一套 Rust/Tauri 核心逻辑可编译、可运行。
+- 涉及路径、环境变量、进程、端口、文件权限、系统托盘、窗口行为和外部命令时，优先使用跨平台 API，并为平台差异提供明确分支。
+- macOS 使用 `.app` / `.dmg` 构建链路，Windows 使用 `.exe` / NSIS / MSI 构建链路；不得用一端脚本或路径覆盖另一端配置。
+- 修改构建、安装、部署或恢复流程时，同步检查 `build-macos.sh`、`build-windows.sh`、Windows PowerShell/CMD 脚本及 README 文档。
+- 每次跨平台改动至少验证 Rust 格式、Rust 测试、前端语法和配置格式；具备对应工具链时分别执行 macOS 与 Windows 构建前检查。
+- 提交前检查平台专属条件编译、资源路径和打包资源清单，避免出现“一端可用、另一端启动失败”的回归。
