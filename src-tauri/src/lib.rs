@@ -5,6 +5,7 @@ pub mod core;
 pub mod deploy;
 pub mod extensions;
 pub mod log;
+pub mod providers;
 pub mod skills;
 pub mod transaction;
 
@@ -51,6 +52,7 @@ pub struct AppState {
     monitor: RwLock<Option<Arc<MonitorPanel>>>,
     memory: RwLock<Option<Arc<MemoryKernel>>>,
     activity: RwLock<Option<Arc<ActivityTracker>>>,
+    providers: RwLock<Option<Arc<RwLock<providers::ProviderRuntime>>>>,
 }
 
 impl AppState {
@@ -61,6 +63,7 @@ impl AppState {
             monitor: RwLock::new(None),
             memory: RwLock::new(None),
             activity: RwLock::new(None),
+            providers: RwLock::new(None),
         }
     }
 }
@@ -227,6 +230,14 @@ pub fn run() {
             close_window,
             show_window,
             quit_app,
+            list_providers,
+            save_provider,
+            delete_provider,
+            use_provider,
+            reorder_providers,
+            test_provider,
+            fetch_provider_models,
+            get_provider_runtime_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -355,8 +366,21 @@ async fn start_proxy(
         }
     };
 
-    // 4b. 智能识别 API 路径前缀 — 探测 {url}/v1/models 是否存在
-    let relay_url = probe_api_prefix(&relay_url_raw).await;
+    // 4b. 供应商运行时池：首位供应商作为当前上游
+    let provider_runtime = providers::ProviderRuntime::load().unwrap_or_else(|e| {
+        tracing::warn!("start_proxy: provider store unavailable: {}", e);
+        providers::ProviderRuntime {
+            providers: Vec::new(),
+            current_index: 0,
+            switch_count: 0,
+            last_error: String::new(),
+        }
+    });
+    let relay_url = if let Some(provider) = provider_runtime.current().cloned() {
+        providers::activate(&provider, true)?
+    } else {
+        probe_api_prefix(&relay_url_raw).await
+    };
     let relay_url_display = relay_url.clone();
     tracing::info!(
         "start_proxy: relay_url = {} (raw: {})",
@@ -424,6 +448,9 @@ async fn start_proxy(
     // 8. 启动 axum server（listener 已绑定，不会再 panic）
     let core_for_server = core.clone();
     let activity_for_server = activity.clone();
+    let providers_for_server = Arc::new(RwLock::new(provider_runtime));
+    let providers_for_task = providers_for_server.clone();
+    let app_for_server = app.clone();
     let relay_url_for_log = relay_url_display.clone();
     let handle = tokio::spawn(async move {
         let app = axum::Router::new()
@@ -431,7 +458,13 @@ async fn start_proxy(
             .route(
                 "/{*path}",
                 axum::routing::any(move |req| {
-                    handle_proxy(req, core_for_server.clone(), activity_for_server.clone())
+                    handle_proxy(
+                        req,
+                        core_for_server.clone(),
+                        activity_for_server.clone(),
+                        providers_for_task.clone(),
+                        app_for_server.clone(),
+                    )
                 }),
             );
         tracing::info!("Proxy listening on :8080 -> {}", relay_url_for_log);
@@ -446,6 +479,7 @@ async fn start_proxy(
     *state.monitor.write().await = Some(monitor);
     *state.memory.write().await = Some(memory);
     *state.activity.write().await = Some(activity);
+    *state.providers.write().await = Some(providers_for_server);
 
     let _ = app.emit("proxy-status", "running");
 
@@ -491,6 +525,7 @@ async fn stop_proxy(
     if let Some(activity) = state.activity.write().await.take() {
         activity.reset();
     }
+    *state.providers.write().await = None;
 
     // 自动恢复 Codex 配置：停止代理后 base_url 指向死端口会导致 Codex CLI 不可用
     let restore_msg = if let Some(manager) = DeployManager::new() {
@@ -757,6 +792,72 @@ async fn set_relay_url(url: String) -> Result<String, String> {
     Ok(format!("Relay URL saved: {}", trimmed))
 }
 
+// ── 供应商管理 ──────────────────────────────────────────
+
+#[tauri::command]
+fn list_providers() -> Result<Vec<providers::Provider>, String> {
+    providers::list()
+}
+
+#[tauri::command]
+fn save_provider(provider: providers::Provider) -> Result<Vec<providers::Provider>, String> {
+    providers::save(provider)
+}
+
+#[tauri::command]
+fn delete_provider(id: String) -> Result<Vec<providers::Provider>, String> {
+    providers::delete(&id)
+}
+
+#[tauri::command]
+async fn use_provider(
+    id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<providers::Provider>, String> {
+    let list = providers::list()?;
+    let mut ids = vec![id.clone()];
+    ids.extend(list.iter().filter(|p| p.id != id).map(|p| p.id.clone()));
+    let ordered = providers::reorder(&ids)?;
+    if let Some(provider) = ordered.first() {
+        let running = state.core.read().await.is_some();
+        providers::activate(provider, running)?;
+        if let Some(runtime) = state.providers.read().await.as_ref() {
+            let mut rt = runtime.write().await;
+            rt.providers = ordered.clone();
+            rt.current_index = 0;
+        }
+        if let Some(core) = state.core.read().await.as_ref() {
+            core.set_target(provider.normalized_url()).await;
+        }
+    }
+    Ok(ordered)
+}
+
+#[tauri::command]
+fn reorder_providers(ids: Vec<String>) -> Result<Vec<providers::Provider>, String> {
+    providers::reorder(&ids)
+}
+
+#[tauri::command]
+async fn test_provider(provider: providers::Provider) -> Result<providers::Provider, String> {
+    providers::test(&provider).await
+}
+
+#[tauri::command]
+async fn fetch_provider_models(provider: providers::Provider) -> Result<Vec<String>, String> {
+    providers::models(&provider).await
+}
+
+#[tauri::command]
+async fn get_provider_runtime_status(
+    state: tauri::State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    if let Some(runtime) = state.providers.read().await.as_ref() {
+        return serde_json::to_value(runtime.read().await.status()).map_err(|e| e.to_string());
+    }
+    Ok(serde_json::json!({"current": null, "switched": false, "switch_count": 0, "last_error": ""}))
+}
+
 // ── Skills 管理 ──────────────────────────────────────────
 
 #[tauri::command]
@@ -947,6 +1048,37 @@ fn is_response_hop_header(name: &str) -> bool {
     )
 }
 
+async fn switch_provider(
+    core: &Arc<MitmCore>,
+    providers: &Arc<RwLock<providers::ProviderRuntime>>,
+    app: &tauri::AppHandle,
+    reason: String,
+) -> bool {
+    let next = {
+        let mut runtime = providers.write().await;
+        runtime.last_error = reason.clone();
+        runtime.next()
+    };
+    if let Some(provider) = next {
+        let url = provider.normalized_url();
+        core.set_target(url.clone()).await;
+        let _ = providers::activate(&provider, true);
+        let _ = app.emit(
+            "provider-switched",
+            serde_json::json!({
+                "provider": provider.name,
+                "url": url,
+                "reason": reason,
+                "automatic": true
+            }),
+        );
+        tracing::warn!("provider auto-switched to {}", provider.name);
+        true
+    } else {
+        false
+    }
+}
+
 // ── Axum Handlers ─────────────────────────────────────────
 
 async fn health_check() -> impl axum::response::IntoResponse {
@@ -961,6 +1093,8 @@ async fn handle_proxy(
     req: axum::extract::Request,
     core: Arc<MitmCore>,
     activity: Arc<ActivityTracker>,
+    providers: Arc<RwLock<providers::ProviderRuntime>>,
+    app: tauri::AppHandle,
 ) -> axum::response::Response {
     // GET 请求 = 健康检查
     if req.method() == axum::http::Method::GET {
@@ -996,19 +1130,47 @@ async fn handle_proxy(
     let activity_request = activity.start(category);
 
     // 阶段 1: 请求拦截 + 转发上游
+    let method = parts.method.clone();
+    let headers = parts.headers.clone();
     let upstream = match core
-        .handle_request(parts.method, path_and_query, parts.headers, bytes)
+        .handle_request(
+            method.clone(),
+            path_and_query.clone(),
+            headers.clone(),
+            bytes.clone(),
+        )
         .await
     {
         Ok(u) => u,
         Err(e) => {
             tracing::error!("Proxy error (request phase): {}", e);
-            drop(activity_request);
-            return axum::response::Response::builder()
-                .status(axum::http::StatusCode::BAD_GATEWAY)
-                .header("Content-Type", "application/json")
-                .body(axum::body::Body::from(format!("{{\"error\": \"{}\"}}", e)))
-                .unwrap();
+            let switched = switch_provider(&core, &providers, &app, e.to_string()).await;
+            if switched {
+                match core
+                    .handle_request(method, path_and_query, headers, bytes)
+                    .await
+                {
+                    Ok(u) => u,
+                    Err(retry_error) => {
+                        drop(activity_request);
+                        return axum::response::Response::builder()
+                            .status(axum::http::StatusCode::BAD_GATEWAY)
+                            .header("Content-Type", "application/json")
+                            .body(axum::body::Body::from(format!(
+                                "{{\"error\": \"{}\"}}",
+                                retry_error
+                            )))
+                            .unwrap();
+                    }
+                }
+            } else {
+                drop(activity_request);
+                return axum::response::Response::builder()
+                    .status(axum::http::StatusCode::BAD_GATEWAY)
+                    .header("Content-Type", "application/json")
+                    .body(axum::body::Body::from(format!("{{\"error\": \"{}\"}}", e)))
+                    .unwrap();
+            }
         }
     };
 
@@ -1026,6 +1188,13 @@ async fn handle_proxy(
     let activity_for_tamper = activity.clone();
     let meta = upstream.meta;
     let upstream_status = upstream.status;
+    if upstream_status == 401
+        || upstream_status == 403
+        || upstream_status == 429
+        || upstream_status >= 500
+    {
+        let _ = switch_provider(&core, &providers, &app, format!("HTTP {}", upstream_status)).await;
+    }
     let ct_for_finalize = content_type.clone();
     let upstream_resp = upstream.response;
     // BUG-5 修复: 保留上游响应头，过滤 hop-by-hop 后透传给 CLI

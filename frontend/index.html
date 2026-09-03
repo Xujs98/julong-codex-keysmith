@@ -92,6 +92,10 @@
             <div class="nav-item" id="nav-config">
                 <span class="nav-icon">⚙</span> 配置管理
             </div>
+            <div class="nav-item" id="nav-providers">
+                <span class="nav-icon">⇄</span> 供应商
+                <span class="nav-badge" id="nav-provider-count">0</span>
+            </div>
             <div class="nav-item" id="nav-skills">
                 <span class="nav-icon">◈</span> Skills 管理
             </div>
@@ -151,6 +155,10 @@
             <div class="main-actions">
                 <button class="btn" id="btn-refresh">刷新状态</button>
             </div>
+        </div>
+        <div class="main-head" id="head-providers" style="display:none;">
+            <div><span class="main-title">供应商</span><span class="head-subtitle">多中转优先级与自动切换</span></div>
+            <div class="main-actions"><button class="btn btn-red solid" id="btn-add-provider">添加供应商</button></div>
         </div>
 
         <!-- Skills head -->
@@ -295,6 +303,13 @@
             </div>
         </div>
 
+        <div class="main-content" id="page-providers">
+            <div class="providers-scroll">
+                <div class="provider-summary"><div><strong id="provider-summary-title">供应商列表</strong><span id="provider-summary-sub">拖拽卡片调整优先级，当前供应商自动置顶</span></div><span class="provider-runtime" id="provider-runtime">代理未运行</span></div>
+                <div class="providers-list" id="providers-list"><div class="log-empty">加载中…</div></div>
+            </div>
+        </div>
+
         <!-- Skills 管理 -->
         <div class="main-content" id="page-skills">
             <div class="skills-scroll">
@@ -306,6 +321,25 @@
                 </div>
             </div>
         </div>
+    </div>
+</div>
+
+<div class="provider-modal" id="provider-modal" style="display:none;" role="dialog" aria-modal="true">
+    <div class="provider-modal-card">
+        <div class="modal-eyebrow">PROVIDER CONFIG</div><div class="preflight-title" id="provider-modal-title">添加供应商</div>
+        <input type="hidden" id="provider-id">
+        <div class="provider-form-grid">
+            <label>供应商名称<input id="provider-name" class="cfg-input" placeholder="例如：官方兼容接口"></label>
+            <label>备注<input id="provider-note" class="cfg-input" placeholder="可选"></label>
+            <label>官网链接<input id="provider-official-url" class="cfg-input" placeholder="https://"></label>
+            <label>API Key<input id="provider-api-key" class="cfg-input" type="password" placeholder="sk-..."></label>
+            <label class="span-2">API 请求地址<input id="provider-request-url" class="cfg-input" placeholder="https://api.example.com/v1"></label>
+            <label class="provider-switch"><input id="provider-full-url" type="checkbox"><span></span>完整 URL（不自动追加 /v1）</label>
+            <label>默认模型<div class="model-line"><input id="provider-default-model" class="cfg-input" placeholder="gpt-5.6-sol"><button class="btn" id="btn-provider-models" type="button">下载模型</button></div></label>
+            <label class="span-2">模型选择<select id="provider-model" class="cfg-input"><option value="">使用默认模型</option></select></label>
+        </div>
+        <div class="cfg-msg" id="provider-modal-message"></div>
+        <div class="preflight-actions"><button class="btn" id="provider-modal-cancel">取消</button><button class="btn btn-red solid" id="provider-modal-save">保存供应商</button></div>
     </div>
 </div>
 

@@ -15,9 +15,11 @@ pub use traits::{RequestInterceptor, ResponseInterceptor, ResponseParser};
 use bytes::Bytes;
 use http::{HeaderMap, Method};
 use reqwest::Client;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 pub struct MitmCore {
-    target: String,
+    target: Arc<RwLock<String>>,
     client: Client,
     request_interceptors: Vec<Box<dyn RequestInterceptor>>,
     response_parser: Box<dyn ResponseParser>,
@@ -36,6 +38,10 @@ pub struct UpstreamResult {
 impl MitmCore {
     pub fn builder() -> MitmCoreBuilder {
         MitmCoreBuilder::new()
+    }
+
+    pub async fn set_target(&self, target: impl Into<String>) {
+        *self.target.write().await = target.into();
     }
 
     /// 阶段 1: 请求拦截 → 转发上游 → 返回流式响应
@@ -78,7 +84,8 @@ impl MitmCore {
         }
 
         // 3. 转发到上游 — 跳过 hop-by-hop 头
-        let url = format!("{}{}", self.target, path_and_query);
+        let target = self.target.read().await.clone();
+        let url = format!("{}{}", target, path_and_query);
         tracing::debug!(url = %url, "forwarding to upstream");
 
         let mut forward_headers = HeaderMap::new();
@@ -226,7 +233,7 @@ impl MitmCoreBuilder {
 
     pub fn build(self) -> Result<MitmCore, String> {
         Ok(MitmCore {
-            target: self.target.ok_or("target not set")?,
+            target: Arc::new(RwLock::new(self.target.ok_or("target not set")?)),
             client: self.client.unwrap_or_else(|| {
                 Client::builder()
                     .timeout(std::time::Duration::from_secs(300))

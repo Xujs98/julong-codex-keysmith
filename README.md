@@ -45,8 +45,11 @@ Codex CLI ──HTTP :8080──▶ MITM Core (管道编排)
 | M5 Memory | ResponseInterceptor | 记录成功交互到 memory.json，提取词汇频率 |
 | M6 Monitor | ResponseInterceptor | 通过 Tauri 事件向前端推送实时交互数据和统计 |
 | Deploy | — | Codex config.toml 备份/修改/恢复，部署 bridge.md + skills/ |
+| Providers | — | 多供应商持久化、拖拽排序、测速/模型拉取、auth.json/config.toml 同步与异常自动切换 |
 
 仪表盘的“实时活动”面板会完整展示破解、逆向、渗透和已篡改四类执行状态；总交互数显示在面板标题中，各分类累计数量显示在对应机器人卡片右上角，并随事件实时刷新。
+
+“供应商”页面支持添加多个 API 中转，拖拽调整优先级并点击“使用”置顶。保存供应商时会同步 `~/.codex/auth.json` 的 `OPENAI_API_KEY`、`~/.codex/config.toml` 的模型/供应商信息，并在代理运行期间保留本地 `127.0.0.1:8080` 入口；上游网络错误、401/403、429 或 5xx 会按排序自动切换并在界面标注。
 
 ## bridge.md 指令集
 
@@ -173,6 +176,16 @@ cargo install cargo-xwin
 ```
 
 产物位于 `artifacts/windows-local/`，其中包含 `矩龙破甲.exe`、`bridge.md` 和 `codex-skills/`。
+
+### 供应商功能验证
+
+```bash
+export PATH="$HOME/.nvm/versions/node/v24.13.0/bin:$PATH"
+node --check frontend/app.js
+cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+cargo test --manifest-path src-tauri/Cargo.toml
+python3 -m json.tool src-tauri/tauri.conf.json >/dev/null
+```
 
 ### 使用方式
 

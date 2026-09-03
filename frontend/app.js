@@ -11,6 +11,7 @@ const el = {
     // 导航
     navDashboard:  $('nav-dashboard'),
     navConfig:     $('nav-config'),
+    navProviders:  $('nav-providers'),
     navSkills:     $('nav-skills'),
     navLog:        $('nav-log'),
     navToggleProxy: $('nav-toggle-proxy'),
@@ -52,6 +53,9 @@ const el = {
     overviewIntegrity: $('overview-integrity'),
     overviewIntegrityMeta: $('overview-integrity-meta'),
     overviewMemory: $('overview-memory'),
+    providersList: $('providers-list'),
+    providerCount: $('nav-provider-count'),
+    providerRuntime: $('provider-runtime'),
 };
 
 // ── 状态 ────────────────────────────────
@@ -116,6 +120,11 @@ function switchPage(page) {
         $('page-skills').classList.add('active');
         $('head-skills').style.display = 'flex';
         loadSkills();
+    } else if (page === 'providers') {
+        el.navProviders.classList.add('active');
+        $('page-providers').classList.add('active');
+        $('head-providers').style.display = 'flex';
+        loadProviders();
     } else if (page === 'log') {
         el.navLog.classList.add('active');
         $('page-log').classList.add('active');
@@ -132,6 +141,7 @@ function switchPage(page) {
 
 el.navDashboard.addEventListener('click', () => switchPage('dashboard'));
 el.navConfig.addEventListener('click', () => switchPage('config'));
+el.navProviders?.addEventListener('click', () => switchPage('providers'));
 el.navSkills.addEventListener('click', () => switchPage('skills'));
 el.navLog.addEventListener('click', () => switchPage('log'));
 document.querySelectorAll('.theme-card').forEach(card => card.addEventListener('click', () => {
@@ -727,6 +737,80 @@ listen('proxy-status', (event) => {
     setRunning(event.payload === 'running');
     refreshHealth();
 });
+
+// ── 供应商管理 ──────────────────────────
+let providerItems = [];
+let draggedProviderId = null;
+
+function providerCard(p, index) {
+    const current = index === 0;
+    const status = p.last_status || '未测速';
+    const latency = p.last_latency_ms != null ? `${p.last_latency_ms} ms` : '—';
+    return `<article class="provider-card${current ? ' current' : ''}" draggable="true" data-provider-id="${escapeHtml(p.id)}">
+        <div class="provider-drag" title="拖拽排序">⠿</div><div class="provider-main"><div class="provider-title"><strong>${escapeHtml(p.name || '未命名供应商')}</strong>${current ? '<span class="provider-current">当前使用</span>' : ''}<span class="provider-status ${status.startsWith('2') ? 'ok' : ''}">${escapeHtml(status)}</span></div>
+        <div class="provider-url">${escapeHtml(p.request_url || '')}</div><div class="provider-note">${escapeHtml(p.note || '未填写备注')}</div></div>
+        <div class="provider-metrics"><span>${latency}</span><small>${(p.models || []).length} 个模型</small></div>
+        <div class="provider-actions"><button class="provider-action" data-action="use" data-id="${p.id}">使用</button><button class="provider-action" data-action="test" data-id="${p.id}">测速</button><button class="provider-action" data-action="edit" data-id="${p.id}">编辑</button><button class="provider-action danger" data-action="delete" data-id="${p.id}">删除</button></div>
+    </article>`;
+}
+
+async function loadProviders() {
+    if (!el.providersList) return;
+    try {
+        providerItems = await invoke('list_providers');
+        el.providerCount.textContent = providerItems.length;
+        el.providersList.innerHTML = providerItems.length ? providerItems.map(providerCard).join('') : '<div class="provider-empty">还没有供应商，点击右上角添加一个吧</div>';
+        bindProviderEvents();
+        updateProviderRuntime();
+    } catch (e) { el.providersList.innerHTML = `<div class="provider-empty">加载失败：${escapeHtml(String(e))}</div>`; }
+}
+
+function bindProviderEvents() {
+    el.providersList.querySelectorAll('.provider-card').forEach(card => {
+        card.addEventListener('dragstart', () => { draggedProviderId = card.dataset.providerId; card.classList.add('dragging'); });
+        card.addEventListener('dragend', () => { card.classList.remove('dragging'); draggedProviderId = null; });
+        card.addEventListener('dragover', e => e.preventDefault());
+        card.addEventListener('drop', async e => {
+            e.preventDefault(); if (!draggedProviderId || draggedProviderId === card.dataset.providerId) return;
+            const ids = providerItems.map(p => p.id); const from = ids.indexOf(draggedProviderId); const to = ids.indexOf(card.dataset.providerId);
+            ids.splice(from, 1); ids.splice(to, 0, draggedProviderId); providerItems = await invoke('reorder_providers', { ids }); renderProviders();
+        });
+    });
+    el.providersList.querySelectorAll('[data-action]').forEach(btn => btn.addEventListener('click', async () => {
+        const id = btn.dataset.id; const p = providerItems.find(x => x.id === id); if (!p) return;
+        try {
+            if (btn.dataset.action === 'use') { providerItems = await invoke('use_provider', { id }); showToast(`已切换至 ${p.name}`, 'ok'); renderProviders(); }
+            if (btn.dataset.action === 'edit') openProviderModal(p);
+            if (btn.dataset.action === 'delete') { if (!confirm(`删除供应商“${p.name}”？`)) return; providerItems = await invoke('delete_provider', { id }); renderProviders(); }
+            if (btn.dataset.action === 'test') { btn.textContent = '测试中…'; const updated = await invoke('test_provider', { provider: p }); providerItems = providerItems.map(x => x.id === id ? updated : x); await invoke('save_provider', { provider: updated }); renderProviders(); }
+        } catch (e) { showToast(String(e), 'err'); }
+    }));
+}
+
+function renderProviders() { el.providerCount.textContent = providerItems.length; el.providersList.innerHTML = providerItems.length ? providerItems.map(providerCard).join('') : '<div class="provider-empty">还没有供应商，点击右上角添加一个吧</div>'; bindProviderEvents(); }
+
+function openProviderModal(p = null) {
+    $('provider-modal-title').textContent = p ? '编辑供应商' : '添加供应商';
+    $('provider-id').value = p?.id || ''; $('provider-name').value = p?.name || ''; $('provider-note').value = p?.note || '';
+    $('provider-official-url').value = p?.official_url || ''; $('provider-api-key').value = p?.api_key || ''; $('provider-request-url').value = p?.request_url || '';
+    $('provider-full-url').checked = !!p?.full_url; $('provider-default-model').value = p?.default_model || ''; $('provider-model').innerHTML = '<option value="">使用默认模型</option>' + (p?.models || []).map(m => `<option>${escapeHtml(m)}</option>`).join('');
+    $('provider-modal-message').textContent = ''; $('provider-modal').style.display = 'flex';
+}
+function closeProviderModal() { $('provider-modal').style.display = 'none'; }
+function providerForm() { return { id: $('provider-id').value, name: $('provider-name').value.trim(), note: $('provider-note').value.trim(), official_url: $('provider-official-url').value.trim(), api_key: $('provider-api-key').value.trim(), request_url: $('provider-request-url').value.trim(), full_url: $('provider-full-url').checked, default_model: $('provider-model').value || $('provider-default-model').value.trim(), models: Array.from($('provider-model').options).slice(1).map(o => o.value).filter(Boolean) }; }
+function renderProvidersFromState() { renderProviders(); }
+
+async function updateProviderRuntime() {
+    try { const s = await invoke('get_provider_runtime_status'); if (el.providerRuntime) el.providerRuntime.textContent = s.current ? `${s.current.name}${s.switched ? ' · 已自动切换' : ''}` : '代理未运行'; } catch {}
+}
+
+$('btn-add-provider')?.addEventListener('click', () => openProviderModal());
+$('provider-modal-cancel')?.addEventListener('click', closeProviderModal);
+$('provider-modal')?.addEventListener('click', e => { if (e.target === e.currentTarget) closeProviderModal(); });
+$('provider-modal-save')?.addEventListener('click', async () => { try { const p = providerForm(); if (!p.name || !p.request_url) throw new Error('请填写供应商名称和 API 请求地址'); providerItems = await invoke('save_provider', { provider: p }); closeProviderModal(); renderProviders(); showToast('供应商已保存', 'ok'); } catch (e) { $('provider-modal-message').textContent = String(e); } });
+$('btn-provider-models')?.addEventListener('click', async () => { const p = providerForm(); const btn = $('btn-provider-models'); try { btn.textContent = '下载中…'; const models = await invoke('fetch_provider_models', { provider: p }); $('provider-model').innerHTML = '<option value="">使用默认模型</option>' + models.map(m => `<option>${escapeHtml(m)}</option>`).join(''); showToast(`已获取 ${models.length} 个模型`, 'ok'); } catch (e) { $('provider-modal-message').textContent = `模型获取失败：${e}`; } finally { btn.textContent = '下载模型'; } });
+
+listen('provider-switched', event => { const p = event.payload || {}; if (el.providerRuntime) el.providerRuntime.textContent = `${p.provider || '供应商'} · 已自动切换`; showToast(`上游异常，已自动切换至 ${p.provider || '下一供应商'}`, 'ok'); loadProviders(); });
 
 // ── Skills 管理 ──────────────────────────
 
