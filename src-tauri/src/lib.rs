@@ -953,7 +953,7 @@ async fn health_check() -> impl axum::response::IntoResponse {
     (
         axum::http::StatusCode::OK,
         [("Content-Type", "text/plain; charset=utf-8")],
-        "Super-Instruct OK",
+        "julong-codex ok",
     )
 }
 
@@ -967,7 +967,7 @@ async fn handle_proxy(
         return axum::response::Response::builder()
             .status(axum::http::StatusCode::OK)
             .header("Content-Type", "text/plain; charset=utf-8")
-            .body(axum::body::Body::from("Super-Instruct OK"))
+            .body(axum::body::Body::from("julong-codex ok"))
             .unwrap();
     }
 
