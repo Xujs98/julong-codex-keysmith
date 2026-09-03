@@ -46,6 +46,8 @@ Codex CLI ──HTTP :8080──▶ MITM Core (管道编排)
 | M6 Monitor | ResponseInterceptor | 通过 Tauri 事件向前端推送实时交互数据和统计 |
 | Deploy | — | Codex config.toml 备份/修改/恢复，部署 bridge.md + skills/ |
 
+仪表盘的“实时活动”面板会完整展示破解、逆向、渗透和已篡改四类执行状态；总交互数显示在面板标题中，各分类累计数量显示在对应机器人卡片右上角，并随事件实时刷新。
+
 ## bridge.md 指令集
 
 双层防御纵深：

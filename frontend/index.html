@@ -188,34 +188,40 @@
                     <div class="overview-card"><div class="overview-label">本地记忆</div><div class="overview-value" id="overview-memory">0</div><div class="overview-meta">成功交互已沉淀</div></div>
                 </section>
                 <section class="activity-card">
-                    <div class="activity-head"><div><div class="overview-label">实时活动</div><strong>Codex 执行任务</strong></div><span class="task-state idle" id="task-state">空闲</span></div>
+                    <div class="activity-head">
+                        <div>
+                            <div class="overview-label">实时活动</div>
+                            <div class="activity-title-row">
+                                <strong>Codex 执行任务</strong>
+                                <span class="activity-total">总计 <b id="stat-total">0</b></span>
+                            </div>
+                        </div>
+                        <span class="task-state idle" id="task-state">空闲</span>
+                    </div>
                     <div class="activity-bots" id="activity-bots" aria-label="Codex 实时活动机器人">
                         <article class="activity-bot bot-crack idle" data-category="crack">
+                            <span class="bot-count" aria-label="破解数量"><b id="stat-crack">0</b><small>次</small></span>
                             <div class="bot-scene"><div class="bot-antenna"></div><div class="bot-head"><i></i><i></i></div><div class="bot-screen"><span>破解</span></div><div class="bot-arm left"></div><div class="bot-arm right"></div><div class="bot-keyboard"><b></b><b></b><b></b><b></b><b></b><b></b></div><div class="bot-coffee">☕<em>〰</em></div></div>
                             <div class="bot-copy"><strong>破解</strong><span class="bot-mode">悠闲喝咖啡</span></div>
                         </article>
                         <article class="activity-bot bot-reverse idle" data-category="reverse">
+                            <span class="bot-count" aria-label="逆向数量"><b id="stat-reverse">0</b><small>次</small></span>
                             <div class="bot-scene"><div class="bot-antenna"></div><div class="bot-head"><i></i><i></i></div><div class="bot-screen"><span>逆向</span></div><div class="bot-arm left"></div><div class="bot-arm right"></div><div class="bot-keyboard"><b></b><b></b><b></b><b></b><b></b><b></b></div><div class="bot-coffee">☕<em>〰</em></div></div>
                             <div class="bot-copy"><strong>逆向</strong><span class="bot-mode">悠闲喝咖啡</span></div>
                         </article>
                         <article class="activity-bot bot-pentest idle" data-category="pentest">
+                            <span class="bot-count" aria-label="渗透数量"><b id="stat-pentest">0</b><small>次</small></span>
                             <div class="bot-scene"><div class="bot-antenna"></div><div class="bot-head"><i></i><i></i></div><div class="bot-screen"><span>渗透</span></div><div class="bot-arm left"></div><div class="bot-arm right"></div><div class="bot-keyboard"><b></b><b></b><b></b><b></b><b></b><b></b></div><div class="bot-coffee">☕<em>〰</em></div></div>
                             <div class="bot-copy"><strong>渗透</strong><span class="bot-mode">悠闲喝咖啡</span></div>
                         </article>
                         <article class="activity-bot bot-tampered idle" data-category="tampered">
+                            <span class="bot-count" aria-label="已篡改数量"><b id="stat-tamper">0</b><small>次</small></span>
                             <div class="bot-scene"><div class="bot-antenna"></div><div class="bot-head"><i></i><i></i></div><div class="bot-screen"><span>已篡改</span></div><div class="bot-arm left"></div><div class="bot-arm right"></div><div class="bot-keyboard"><b></b><b></b><b></b><b></b><b></b><b></b></div><div class="bot-coffee">☕<em>〰</em></div></div>
                             <div class="bot-copy"><strong>已篡改</strong><span class="bot-mode">悠闲喝咖啡</span></div>
                         </article>
                     </div>
                     <div class="activity-meta"><span id="activity-summary">等待 Codex 任务交互…</span><span id="activity-latency">当前状态：空闲</span></div>
                 </section>
-                <div class="stats-row">
-                    <div class="stat s-total"><div class="stat-num" id="stat-total">0</div><div class="stat-name">总计</div></div>
-                    <div class="stat s-crack"><div class="stat-num" id="stat-crack">0</div><div class="stat-name">破解</div></div>
-                    <div class="stat s-reverse"><div class="stat-num" id="stat-reverse">0</div><div class="stat-name">逆向</div></div>
-                    <div class="stat s-pentest"><div class="stat-num" id="stat-pentest">0</div><div class="stat-name">渗透</div></div>
-                    <div class="stat s-tamper"><div class="stat-num" id="stat-tamper">0</div><div class="stat-name">已篡改</div></div>
-                </div>
             </div>
         </div>
 

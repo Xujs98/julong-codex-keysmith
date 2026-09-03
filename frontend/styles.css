@@ -62,6 +62,7 @@ body{background:var(--page-bg)!important;color:var(--ink)!important;border-radiu
 .activity-bot.bot-reverse{--bot-accent:#8068e7;--bot-soft:rgba(128,104,231,.15)}
 .activity-bot.bot-pentest{--bot-accent:#c17a23;--bot-soft:rgba(193,122,35,.16)}
 .activity-bot.bot-tampered{--bot-accent:#2ca777;--bot-soft:rgba(44,167,119,.16)}
+.activity-title-row{display:flex;align-items:baseline;gap:10px}.activity-total{display:inline-flex;align-items:baseline;gap:5px;color:var(--ink-faint);font-size:10px;font-weight:650}.activity-total b{color:var(--accent-strong);font-size:16px;font-variant-numeric:tabular-nums}.bot-count{position:absolute;z-index:4;right:11px;top:10px;display:flex;align-items:baseline;gap:3px;color:var(--bot-accent);font-variant-numeric:tabular-nums}.bot-count b{font-size:17px;line-height:1}.bot-count small{font-size:8px;font-weight:700;opacity:.72}
 .activity-bot.active{transform:translateY(-3px);border-color:var(--bot-accent);box-shadow:0 12px 30px color-mix(in srgb,var(--bot-accent) 25%,transparent)}
 .activity-bot.pulse{animation:bot-pulse 1.6s ease both}
 .bot-scene{height:135px;position:relative}
@@ -82,6 +83,27 @@ body{background:var(--page-bg)!important;color:var(--ink)!important;border-radiu
 .filter-chip[data-filter="crack"]{color:#bf473e}.filter-chip[data-filter="reverse"]{color:#765fd0}.filter-chip[data-filter="pentest"]{color:#a76618}.filter-chip[data-filter="tampered"]{color:#208b63}
 @media (max-width:1050px){.activity-bots{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:600px){.activity-bots{grid-template-columns:1fr}.activity-bot{min-height:175px}}
+
+/* 默认桌面窗口内完整呈现实况面板，统计已合并进活动卡片。 */
+#page-dashboard .dash-pad{padding:15px 24px 16px;overflow:auto}
+#page-dashboard .hero-card{min-height:132px;padding:18px 27px}
+#page-dashboard .hero-card h1{margin:8px 0 5px;font-size:24px}
+#page-dashboard .hero-card p{line-height:1.45}
+#page-dashboard .hero-actions{margin-top:12px}
+#page-dashboard .hero-orbit{width:230px;height:230px;right:65px;top:-49px}
+#page-dashboard .orbit-core{width:68px;height:68px;border-radius:21px}
+#page-dashboard .ring-a{width:180px;height:76px}
+#page-dashboard .ring-b{width:220px;height:116px}
+#page-dashboard .overview-grid{gap:12px;margin:12px 0}
+#page-dashboard .overview-card{padding:11px 16px}
+#page-dashboard .overview-value{margin-top:4px;font-size:18px}
+#page-dashboard .overview-meta{margin-top:3px}
+#page-dashboard .activity-card{margin:0;padding:13px 17px 11px}
+#page-dashboard .activity-bots{gap:10px;margin-top:10px}
+#page-dashboard .activity-bot{min-height:178px;padding:10px 11px}
+#page-dashboard .bot-scene{height:127px}
+#page-dashboard .activity-meta{margin-top:8px}
+@media (max-height:700px){#page-dashboard .hero-card{min-height:112px;padding-top:13px;padding-bottom:13px}#page-dashboard .hero-card p{display:none}#page-dashboard .hero-actions{margin-top:9px}#page-dashboard .overview-grid{margin:9px 0}#page-dashboard .activity-bot{min-height:168px}#page-dashboard .bot-scene{height:117px}}
 
 /* 停止代理确认层：高风险动作采用清晰层级、保护倒计时与双按钮决策。 */
 body.modal-open{overflow:hidden}

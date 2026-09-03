@@ -23,7 +23,7 @@ const el = {
     ssProxyStatus: $('ss-proxy-status'),
     ssRelay:       $('ss-relay'),
     ssMemory:      $('ss-memory'),
-    // 统计
+    // 实时活动中的统计
     statTotal:     $('stat-total'),
     statCrack:     $('stat-crack'),
     statReverse:   $('stat-reverse'),
@@ -370,11 +370,11 @@ function updateToggleButton() {
 // ── 统计更新 ────────────────────────────
 
 function updateStats(stats) {
-    el.statTotal.textContent   = stats.total   ?? 0;
-    el.statCrack.textContent   = stats.crack   ?? 0;
-    el.statReverse.textContent = stats.reverse ?? 0;
-    el.statPentest.textContent = stats.pentest ?? 0;
-    el.statTamper.textContent  = stats.tamper  ?? 0;
+    el.statTotal.textContent   = Number(stats.total   ?? 0).toLocaleString('zh-CN');
+    el.statCrack.textContent   = Number(stats.crack   ?? 0).toLocaleString('zh-CN');
+    el.statReverse.textContent = Number(stats.reverse ?? 0).toLocaleString('zh-CN');
+    el.statPentest.textContent = Number(stats.pentest ?? 0).toLocaleString('zh-CN');
+    el.statTamper.textContent  = Number(stats.tamper  ?? 0).toLocaleString('zh-CN');
     if (stats.memory_count != null) {
         el.ssMemory.textContent = stats.memory_count;
         el.cfgMemoryCount.textContent = `${stats.memory_count} 条成功交互`;
