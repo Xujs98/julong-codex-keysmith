@@ -1,6 +1,6 @@
 param(
     [ValidateSet("exe", "nsis", "msi", "all")]
-    [string]$Mode = "exe",
+    [string]$Mode = "nsis",
 
     [ValidateSet("x64", "arm64")]
     [string]$Arch = "x64"

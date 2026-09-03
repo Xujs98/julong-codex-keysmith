@@ -152,6 +152,8 @@ src-tauri\\target\\release\\bundle\\nsis\\
 src-tauri\\target\\release\\bundle\\msi\\
 ```
 
+Windows 正式交付使用带有矩龙破甲品牌视觉的 NSIS `.exe` 安装程序，安装向导包含专属顶部横幅、侧栏、应用图标和开始菜单目录，并将 `bridge.md`、`codex-skills/` 及 Tauri 运行时资源一并打包。直接执行 `build-windows.ps1` 时默认生成 NSIS 安装包；裸 EXE 仅用于调试验证。
+
 当前配置中的 `macOSPrivateApi` 仅在 macOS 编译目标生效，不影响 Windows 构建。
 
 如果开发电脑是 macOS，可使用 `cargo-xwin` 在本机交叉编译，不需要提交代码，也不需要 GitHub Actions：
@@ -199,6 +201,7 @@ Super-Instruct-Codex-5.6/
 │   ├── build.rs
 │   ├── capabilities/default.json
 │   ├── icons/                     # 全平台图标（红色菱形）
+│   ├── installer/                 # Windows NSIS 安装向导品牌视觉资源
 │   └── src/
 │       ├── main.rs                # 入口：调用 super_instruct::run()
 │       ├── lib.rs                 # Tauri app + axum proxy + Tauri commands

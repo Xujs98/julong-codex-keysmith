@@ -43,6 +43,10 @@
     "windows": {
       "nsis": {
         "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "headerImage": "installer/installer-header.bmp",
+        "sidebarImage": "installer/installer-sidebar.bmp",
+        "startMenuFolder": "矩龙破甲",
         "displayLanguageSelector": false,
         "languages": [
           "SimpChinese",
