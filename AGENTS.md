@@ -48,3 +48,9 @@
 - Windows 构建优先生成 NSIS `.exe` 安装包；需要 MSI 时作为附加格式，EXE 安装程序仍是必需交付物。
 - 安装后必须从全新目录验证：开始菜单/桌面快捷方式、卸载入口、资源完整性、应用启动、代理启动及 `julong-codex status` 均可用。
 - 修改资源清单、安装路径或 Windows 构建脚本时，同步更新 `build-windows.ps1`、`build-windows.cmd`、`build-windows.sh` 和 README，并记录安装包验证结果。
+
+## 当前开发机与命令输出
+
+- 当前开发机是 macOS；面向用户给出的可直接执行命令默认使用 macOS 的 zsh/bash 语法和项目 macOS 脚本。
+- Windows PowerShell/CMD 命令仅在明确标注“Windows 目标机”时展示，不作为当前 macOS 的操作指令。
+- 在 macOS 上涉及 Windows 时，说明 `build-windows.sh` 的交叉编译边界；完整 NSIS `.exe` 安装包的构建步骤单独标注为 Windows 目标环境流程。
