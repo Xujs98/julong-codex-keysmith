@@ -3,6 +3,9 @@ set -euo pipefail
 
 MODE="${1:-all}"
 
+echo "=== macOS build (${MODE}) ==="
+echo "This script only builds Apple targets; it does not use the Windows toolchain."
+
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "macOS bundles must be built on macOS."
   exit 1
@@ -54,5 +57,9 @@ for script_name in "${SCRIPTS[@]}"; do
 done
 
 echo "Build artifacts:"
-find src-tauri/target -path "*/release/bundle/*" -type f \
-  \( -name "*.app.tar.gz" -o -name "*.dmg" -o -name "Info.plist" \) -print
+for target in "${TARGETS[@]}"; do
+  bundle_root="src-tauri/target/${target}/release/bundle"
+  find "${bundle_root}" -type f \
+    \( -name "*.app.tar.gz" -o -name "*.dmg" -o -name "Info.plist" \) \
+    -print 2>/dev/null || true
+done

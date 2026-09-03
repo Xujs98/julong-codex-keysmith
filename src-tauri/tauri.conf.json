@@ -3,7 +3,7 @@
   "productName": "矩龙破甲",
   "mainBinaryName": "矩龙破甲",
   "version": "0.2.0",
-  "identifier": "com.super-instruct.app",
+  "identifier": "com.xujs.julong.codex.keysmith",
   "build": {
     "beforeBuildCommand": "npm run copy-resources",
     "frontendDist": "../frontend"

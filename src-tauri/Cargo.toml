@@ -3,6 +3,11 @@ name = "julong-codex-keysmith"
 version = "0.2.0"
 edition = "2021"
 
+[patch.crates-io]
+# Tauri 2.11.5 probes the WebKit bundle during startup. On some installed
+# Intel macOS apps this CoreFoundation lookup crashes before the window exists.
+tauri-runtime-wry = { path = "../vendor/tauri-runtime-wry" }
+
 [lib]
 name = "julong_codex_keysmith"
 crate-type = ["staticlib", "cdylib", "rlib"]

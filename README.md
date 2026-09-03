@@ -81,6 +81,8 @@ npx tauri build
 
 需要在 macOS 上安装 Xcode Command Line Tools、Rust、Node.js 18+ 和 npm。构建脚本支持 Intel、Apple Silicon，以及同时兼容两种芯片的 Universal 应用：
 
+项目包含 Intel macOS 15 的 WebKit 启动兼容补丁，避免安装后的应用在 Tauri 初始化阶段因 WebKit 版本探测而直接退出。
+
 ```bash
 # 分别构建 Intel 和 Apple Silicon 两套安装包
 ./build-macos.sh all
