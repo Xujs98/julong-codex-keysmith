@@ -805,8 +805,35 @@ fn save_provider(provider: providers::Provider) -> Result<Vec<providers::Provide
 }
 
 #[tauri::command]
-fn delete_provider(id: String) -> Result<Vec<providers::Provider>, String> {
-    providers::delete(&id)
+async fn delete_provider(
+    id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<providers::Provider>, String> {
+    let list = providers::delete(&id)?;
+    let mut next_provider = None;
+
+    if let Some(runtime) = state.providers.read().await.as_ref() {
+        let mut runtime = runtime.write().await;
+        let previous_current = runtime.current().map(|provider| provider.id.clone());
+        runtime.providers = list.clone();
+        runtime.current_index = previous_current
+            .as_ref()
+            .and_then(|current| list.iter().position(|provider| &provider.id == current))
+            .unwrap_or(0);
+
+        if previous_current.as_deref() == Some(id.as_str()) {
+            next_provider = runtime.current().cloned();
+        }
+    }
+
+    if let Some(provider) = next_provider {
+        providers::activate(&provider, true)?;
+        if let Some(core) = state.core.read().await.as_ref() {
+            core.set_target(provider.normalized_url()).await;
+        }
+    }
+
+    Ok(list)
 }
 
 #[tauri::command]

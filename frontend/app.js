@@ -719,20 +719,46 @@ listen('proxy-status', (event) => {
 let providerItems = [];
 let draggedProviderId = null;
 let activeProviderId = null;
+let testingProviderId = null;
+let pendingDeleteProviderId = null;
+let providerDeleteBusy = false;
+let providerModalPreviousFocus = null;
+let providerDeletePreviousFocus = null;
+
+function providerIcon(name) {
+    const icons = {
+        use: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 7 5 5-5 5"/><path d="M14 12H4"/><path d="M13 5h5a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-5"/></svg>',
+        current: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>',
+        test: '<svg class="provider-test-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66"/><path d="M20 5v6h-6"/></svg>',
+        edit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.7 5.3 4 4L8 20H4v-4Z"/><path d="m13 7 4 4"/></svg>',
+        duplicate: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>',
+        delete: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="m7 7 1 13h8l1-13"/><path d="M10 11v5M14 11v5"/></svg>',
+    };
+    return icons[name] || '';
+}
 
 function providerCard(p, index) {
     const current = activeProviderId ? p.id === activeProviderId : index === 0;
+    const testing = testingProviderId === p.id;
+    const testingBusy = testingProviderId !== null;
     const status = p.last_status || '未测速';
     const latency = p.last_latency_ms != null ? `${p.last_latency_ms} ms` : '—';
     const initials = (p.name || '供').trim().slice(0, 1).toUpperCase();
     const statusOk = /^2\d\d/.test(status);
+    const safeId = escapeHtml(p.id);
     return `<article class="provider-card${current ? ' current' : ''}" draggable="true" data-provider-id="${escapeHtml(p.id)}">
-        <button class="provider-drag" type="button" title="拖拽排序" aria-label="拖拽排序"><span>⋮⋮</span></button>
-        <div class="provider-avatar" aria-hidden="true">${escapeHtml(initials)}</div>
-        <div class="provider-main"><div class="provider-title"><strong>${escapeHtml(p.name || '未命名供应商')}</strong>${current ? '<span class="provider-current">当前使用</span>' : ''}</div>
-        <div class="provider-url">${escapeHtml(p.request_url || '未填写 API 请求地址')}</div><div class="provider-note">${escapeHtml(p.note || '未填写备注')}</div></div>
+        <button class="provider-drag" type="button" title="拖拽调整优先级" aria-label="拖拽调整优先级"><span></span><span></span><span></span></button>
+        <div class="provider-avatar" aria-hidden="true"><span>${escapeHtml(initials)}</span><small>${String(index + 1).padStart(2, '0')}</small></div>
+        <div class="provider-main"><div class="provider-title"><strong>${escapeHtml(p.name || '未命名供应商')}</strong>${current ? '<span class="provider-current"><i></i>当前使用</span>' : ''}</div>
+        <div class="provider-url" title="${escapeHtml(p.request_url || '')}">${escapeHtml(p.request_url || '未填写 API 请求地址')}</div><div class="provider-note">${escapeHtml(p.note || '未填写备注')}</div></div>
         <div class="provider-health"><span class="provider-status ${statusOk ? 'ok' : ''}"><i></i>${escapeHtml(status)}</span><strong>${latency}</strong><small>${(p.models || []).length} 个模型</small></div>
-        <div class="provider-actions"><button class="provider-action provider-use" data-action="use" data-id="${p.id}" type="button" ${current ? 'disabled aria-disabled="true"' : ''}><span aria-hidden="true">${current ? '✓' : '▶'}</span><b>${current ? '使用中' : '使用'}</b></button><button class="provider-action" data-action="test" data-id="${p.id}" type="button" title="测速"><span aria-hidden="true">⌁</span></button><button class="provider-action" data-action="edit" data-id="${p.id}" type="button" title="编辑"><span aria-hidden="true">✎</span></button><button class="provider-action" data-action="duplicate" data-id="${p.id}" type="button" title="复制"><span aria-hidden="true">▣</span></button><button class="provider-action danger" data-action="delete" data-id="${p.id}" type="button" title="删除"><span aria-hidden="true">⌫</span></button></div>
+        <div class="provider-actions">
+            <button class="provider-action provider-use" data-action="use" data-id="${safeId}" type="button" ${current ? 'disabled aria-disabled="true"' : ''}>${providerIcon(current ? 'current' : 'use')}<b>${current ? '使用中' : '使用'}</b></button>
+            <button class="provider-action provider-icon-button${testing ? ' is-testing' : ''}" data-action="test" data-id="${safeId}" type="button" title="${testing ? '正在测试连接' : '测试连接'}" aria-label="${testing ? '正在测试连接' : '测试连接'}" ${testingBusy ? `disabled${testing ? ' aria-busy="true"' : ''}` : ''}>${providerIcon('test')}</button>
+            <button class="provider-action provider-icon-button" data-action="edit" data-id="${safeId}" type="button" title="编辑供应商" aria-label="编辑供应商">${providerIcon('edit')}</button>
+            <button class="provider-action provider-icon-button" data-action="duplicate" data-id="${safeId}" type="button" title="复制供应商" aria-label="复制供应商">${providerIcon('duplicate')}</button>
+            <button class="provider-action provider-icon-button danger" data-action="delete" data-id="${safeId}" type="button" title="删除供应商" aria-label="删除供应商">${providerIcon('delete')}</button>
+        </div>
     </article>`;
 }
 
@@ -768,10 +794,27 @@ function bindProviderEvents() {
             if (btn.dataset.action === 'use') { providerItems = await invoke('use_provider', { id }); activeProviderId = id; showToast(`已切换至 ${p.name}`, 'ok'); renderProviders(); }
             if (btn.dataset.action === 'edit') openProviderModal(p);
             if (btn.dataset.action === 'duplicate') { const copy = { ...p, id: '', name: `${p.name} 副本` }; openProviderModal(copy); }
-            if (btn.dataset.action === 'delete') { if (!confirm(`删除供应商“${p.name}”？`)) return; providerItems = await invoke('delete_provider', { id }); renderProviders(); }
-            if (btn.dataset.action === 'test') { btn.textContent = '测试中…'; const updated = await invoke('test_provider', { provider: p }); providerItems = providerItems.map(x => x.id === id ? updated : x); await invoke('save_provider', { provider: updated }); renderProviders(); }
+            if (btn.dataset.action === 'delete') openProviderDeleteModal(p);
+            if (btn.dataset.action === 'test') await testProvider(p);
         } catch (e) { showToast(String(e), 'err'); }
     }));
+}
+
+async function testProvider(provider) {
+    if (testingProviderId) return;
+    testingProviderId = provider.id;
+    renderProviders();
+    try {
+        const updated = await invoke('test_provider', { provider });
+        providerItems = providerItems.map(item => item.id === provider.id ? updated : item);
+        providerItems = await invoke('save_provider', { provider: updated });
+        showToast(`${provider.name} 连接测试完成`, /^2\d\d/.test(updated.last_status || '') ? 'ok' : 'err');
+    } catch (e) {
+        showToast(`测试失败：${String(e)}`, 'err');
+    } finally {
+        testingProviderId = null;
+        renderProviders();
+    }
 }
 
 function renderProviders() {
@@ -804,16 +847,71 @@ function populateModelPicker(models = [], selected = '') {
 }
 
 function openProviderModal(p = null) {
+    providerModalPreviousFocus = document.activeElement;
     $('provider-modal-title').textContent = p ? '编辑供应商' : '添加供应商';
     $('provider-id').value = p?.id || ''; $('provider-name').value = p?.name || ''; $('provider-note').value = p?.note || '';
     $('provider-official-url').value = p?.official_url || ''; $('provider-api-key').value = p?.api_key || ''; $('provider-request-url').value = p?.request_url || '';
     $('provider-full-url').checked = !!p?.full_url; $('provider-default-model').value = p?.default_model || '';
     populateModelPicker(p?.models || [], p?.default_model || '');
     $('provider-modal-message').textContent = ''; $('provider-modal').style.display = 'flex';
+    requestAnimationFrame(() => $('provider-name').focus());
 }
-function closeProviderModal() { $('provider-modal').style.display = 'none'; }
+function closeProviderModal() {
+    $('provider-modal').style.display = 'none';
+    $('provider-model-menu').classList.remove('open');
+    $('provider-model-trigger').setAttribute('aria-expanded', 'false');
+    providerModalPreviousFocus?.focus?.();
+    providerModalPreviousFocus = null;
+}
 function providerForm() { return { id: $('provider-id').value, name: $('provider-name').value.trim(), note: $('provider-note').value.trim(), official_url: $('provider-official-url').value.trim(), api_key: $('provider-api-key').value.trim(), request_url: $('provider-request-url').value.trim(), full_url: $('provider-full-url').checked, default_model: $('provider-default-model').value.trim(), models: Array.from($('provider-model').options).slice(1).map(o => o.value).filter(Boolean) }; }
 function renderProvidersFromState() { renderProviders(); }
+
+function openProviderDeleteModal(provider) {
+    pendingDeleteProviderId = provider.id;
+    providerDeleteBusy = false;
+    providerDeletePreviousFocus = document.activeElement;
+    $('provider-delete-name').textContent = provider.name || '未命名供应商';
+    $('provider-delete-confirm').disabled = false;
+    $('provider-delete-confirm').textContent = '确认删除';
+    $('provider-delete-modal').style.display = 'flex';
+    requestAnimationFrame(() => $('provider-delete-cancel').focus());
+}
+
+function closeProviderDeleteModal() {
+    if (providerDeleteBusy) return;
+    $('provider-delete-modal').style.display = 'none';
+    pendingDeleteProviderId = null;
+    providerDeletePreviousFocus?.focus?.();
+    providerDeletePreviousFocus = null;
+}
+
+async function confirmProviderDelete() {
+    if (!pendingDeleteProviderId || providerDeleteBusy) return;
+    const id = pendingDeleteProviderId;
+    const provider = providerItems.find(item => item.id === id);
+    const deletingCurrent = id === activeProviderId;
+    const confirmButton = $('provider-delete-confirm');
+    providerDeleteBusy = true;
+    confirmButton.disabled = true;
+    confirmButton.textContent = '删除中…';
+    try {
+        providerItems = await invoke('delete_provider', { id });
+        if (deletingCurrent) {
+            activeProviderId = providerItems[0]?.id || null;
+            if (activeProviderId && !isRunning) providerItems = await invoke('use_provider', { id: activeProviderId });
+        }
+        providerDeleteBusy = false;
+        closeProviderDeleteModal();
+        renderProviders();
+        await updateCurrentProviderLabels();
+        showToast(`${provider?.name || '供应商'} 已删除`, 'ok');
+    } catch (e) {
+        providerDeleteBusy = false;
+        confirmButton.disabled = false;
+        confirmButton.textContent = '确认删除';
+        showToast(`删除失败：${String(e)}`, 'err');
+    }
+}
 
 async function updateProviderRuntime() {
     await updateCurrentProviderLabels();
@@ -827,8 +925,12 @@ $('provider-model-trigger')?.addEventListener('click', () => { const menu = $('p
 $('provider-default-model')?.addEventListener('input', e => { const value = $('provider-model-value'); if (value && !e.target.value) value.textContent = $('provider-model-picker').hidden ? '下载模型后可选择' : '选择已下载模型'; });
 $('provider-request-url')?.addEventListener('input', () => { $('provider-modal-message').textContent = ''; });
 $('provider-modal')?.addEventListener('keydown', e => { if (e.key === 'Escape') closeProviderModal(); });
+$('provider-delete-cancel')?.addEventListener('click', closeProviderDeleteModal);
+$('provider-delete-confirm')?.addEventListener('click', confirmProviderDelete);
+$('provider-delete-modal')?.addEventListener('click', e => { if (e.target === e.currentTarget) closeProviderDeleteModal(); });
+$('provider-delete-modal')?.addEventListener('keydown', e => { if (e.key === 'Escape') closeProviderDeleteModal(); });
 $('provider-modal-save')?.addEventListener('click', async () => { try { const p = providerForm(); if (!p.name || !p.request_url) throw new Error('请填写供应商名称和 API 请求地址'); providerItems = await invoke('save_provider', { provider: p }); closeProviderModal(); renderProviders(); showToast('供应商已保存', 'ok'); } catch (e) { $('provider-modal-message').textContent = String(e); } });
-$('btn-provider-models')?.addEventListener('click', async () => { const p = providerForm(); const btn = $('btn-provider-models'); try { btn.classList.add('loading'); btn.querySelector('b').textContent = '下载中…'; const models = await invoke('fetch_provider_models', { provider: p }); populateModelPicker(models, $('provider-default-model').value.trim()); showToast(`已获取 ${models.length} 个模型`, 'ok'); } catch (e) { $('provider-modal-message').textContent = `模型获取失败：${e}`; } finally { btn.classList.remove('loading'); btn.querySelector('b').textContent = '下载模型'; } });
+$('btn-provider-models')?.addEventListener('click', async () => { const p = providerForm(); const btn = $('btn-provider-models'); try { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.classList.add('loading'); btn.querySelector('b').textContent = '下载中…'; const models = await invoke('fetch_provider_models', { provider: p }); populateModelPicker(models, $('provider-default-model').value.trim()); showToast(`已获取 ${models.length} 个模型`, 'ok'); } catch (e) { $('provider-modal-message').textContent = `模型获取失败：${e}`; } finally { btn.disabled = false; btn.removeAttribute('aria-busy'); btn.classList.remove('loading'); btn.querySelector('b').textContent = '下载模型'; } });
 
 listen('provider-switched', event => { const p = event.payload || {}; activeProviderId = p.provider_id || activeProviderId; if (el.providerRuntime) el.providerRuntime.textContent = `${p.provider || '供应商'} · 已自动切换`; showToast(`上游异常，已自动切换至 ${p.provider || '下一供应商'}`, 'ok'); loadProviders(); updateCurrentProviderLabels(); });
 
