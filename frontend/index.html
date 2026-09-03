@@ -256,19 +256,10 @@
                 <div class="cfg-block">
                     <div class="cfg-block-head">Codex 环境</div>
                     <div class="cfg-line"><div class="cfg-k">安装路径</div><div class="cfg-v" id="cfg-codex-home">--</div></div>
-                    <div class="cfg-line"><div class="cfg-k">中转站</div><div class="cfg-v" id="cfg-relay-url">--</div></div>
+                    <div class="cfg-line"><div class="cfg-k">当前供应商</div><div class="cfg-v" id="cfg-provider-name">--</div></div>
                     <div class="cfg-line"><div class="cfg-k">部署状态</div><div class="cfg-v" id="cfg-bridge-status">--</div></div>
                     <div class="cfg-line"><div class="cfg-k">部署完整性</div><div class="cfg-v" id="cfg-integrity-status">--</div></div>
                     <div class="cfg-line"><div class="cfg-k">事务状态</div><div class="cfg-v" id="cfg-transaction-status">--</div></div>
-                </div>
-                <div class="cfg-block">
-                    <div class="cfg-block-head">中转站地址</div>
-                    <div class="cfg-relay-edit">
-                        <input type="text" id="cfg-relay-input" class="cfg-input" placeholder="https://your-relay-url.com/v1" autocomplete="off" spellcheck="false">
-                        <button class="btn btn-red solid" id="btn-save-relay">保存</button>
-                    </div>
-                    <div class="cfg-relay-hint">代理启动时会自动读取此地址作为上游转发目标。请勿填 http://127.0.0.1:8080，那是本地代理端口。</div>
-                    <div class="cfg-msg" id="cfg-relay-message"></div>
                 </div>
                 <div class="cfg-block theme-block">
                     <div class="cfg-block-head">工作台主题</div>
@@ -326,20 +317,26 @@
 
 <div class="provider-modal" id="provider-modal" style="display:none;" role="dialog" aria-modal="true">
     <div class="provider-modal-card">
-        <div class="modal-eyebrow">PROVIDER CONFIG</div><div class="preflight-title" id="provider-modal-title">添加供应商</div>
+        <div class="provider-modal-header">
+            <div>
+                <div class="modal-eyebrow">PROVIDER CONFIG</div>
+                <div class="provider-modal-title" id="provider-modal-title">添加供应商</div>
+                <p class="provider-modal-subtitle">配置一个可用的 OpenAI 兼容服务，保存后即可加入故障切换队列。</p>
+            </div>
+            <button class="provider-modal-close" id="provider-modal-close" type="button" title="关闭">×</button>
+        </div>
         <input type="hidden" id="provider-id">
         <div class="provider-form-grid">
-            <label>供应商名称<input id="provider-name" class="cfg-input" placeholder="例如：官方兼容接口"></label>
-            <label>备注<input id="provider-note" class="cfg-input" placeholder="可选"></label>
-            <label>官网链接<input id="provider-official-url" class="cfg-input" placeholder="https://"></label>
-            <label>API Key<input id="provider-api-key" class="cfg-input" type="password" placeholder="sk-..."></label>
-            <label class="span-2">API 请求地址<input id="provider-request-url" class="cfg-input" placeholder="https://api.example.com/v1"></label>
-            <label class="provider-switch"><input id="provider-full-url" type="checkbox"><span></span>完整 URL（不自动追加 /v1）</label>
-            <label>默认模型<div class="model-line"><input id="provider-default-model" class="cfg-input" placeholder="gpt-5.6-sol"><button class="btn" id="btn-provider-models" type="button">下载模型</button></div></label>
-            <label class="span-2">模型选择<select id="provider-model" class="cfg-input"><option value="">使用默认模型</option></select></label>
+            <label class="field field-span-2">供应商名称<span class="field-hint">给这个连接一个容易识别的名字</span><input id="provider-name" class="cfg-input" placeholder="例如：官方兼容接口"></label>
+            <label class="field">备注<span class="field-hint">可选</span><input id="provider-note" class="cfg-input" placeholder="例如：主力线路"></label>
+            <label class="field">官网链接<span class="field-hint">可选</span><input id="provider-official-url" class="cfg-input" placeholder="https://"></label>
+            <label class="field field-span-2">API Key<span class="field-hint">仅保存在本机 Codex 配置目录</span><input id="provider-api-key" class="cfg-input" type="password" placeholder="sk-..."></label>
+            <label class="field field-span-2">API 请求地址<div class="field-inline-label"><span class="field-hint">OpenAI 兼容的 Responses API 服务地址</span><span class="switch-control"><input id="provider-full-url" type="checkbox"><span class="switch-track"></span><b>完整 URL</b></span></div><input id="provider-request-url" class="cfg-input" placeholder="https://api.example.com/v1"></label>
+            <div class="field field-span-2 model-field"><div class="field-label-row"><span>默认模型</span><span class="field-hint">点击下载按钮获取此供应商支持的模型</span></div><div class="model-line"><input id="provider-default-model" class="cfg-input" placeholder="gpt-5.6-sol"><button class="model-download" id="btn-provider-models" type="button" title="下载模型列表"><span aria-hidden="true">↓</span><b>下载模型</b></button></div><div class="model-picker" id="provider-model-picker" hidden><button class="model-picker-trigger" id="provider-model-trigger" type="button" aria-expanded="false"><span id="provider-model-value">选择已下载模型</span><span class="model-picker-chevron" aria-hidden="true">⌄</span></button><div class="model-picker-menu" id="provider-model-menu" role="listbox"></div></div></div>
+            <select id="provider-model" hidden><option value="">使用默认模型</option></select>
         </div>
         <div class="cfg-msg" id="provider-modal-message"></div>
-        <div class="preflight-actions"><button class="btn" id="provider-modal-cancel">取消</button><button class="btn btn-red solid" id="provider-modal-save">保存供应商</button></div>
+        <div class="provider-modal-footer"><button class="btn provider-cancel" id="provider-modal-cancel">取消</button><button class="btn btn-red solid provider-save" id="provider-modal-save">保存供应商</button></div>
     </div>
 </div>
 

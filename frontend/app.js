@@ -38,11 +38,8 @@ const el = {
     btnRefresh:    $('btn-refresh'),
     btnDeploy:     $('btn-deploy'),
     btnRestore:    $('btn-restore'),
-    btnRelaySave:  $('btn-save-relay'),
     cfgCodexHome:  $('cfg-codex-home'),
-    cfgRelayUrl:   $('cfg-relay-url'),
-    cfgRelayInput: $('cfg-relay-input'),
-    cfgRelayMsg:   $('cfg-relay-message'),
+    cfgProviderName: $('cfg-provider-name'),
     cfgBridgeStatus: $('cfg-bridge-status'),
     cfgIntegrityStatus: $('cfg-integrity-status'),
     cfgTransactionStatus: $('cfg-transaction-status'),
@@ -538,12 +535,7 @@ async function refreshCodexInfo() {
     try {
         const info = await invoke('get_codex_info');
         el.cfgCodexHome.textContent = info.codex_home ?? '未检测到';
-        el.cfgRelayUrl.textContent = info.relay_url ?? '未知';
-        el.ssRelay.textContent = info.relay_url ?? '--';
-        // 同步填充编辑框（用户未在编辑时才覆盖）
-        if (document.activeElement !== el.cfgRelayInput) {
-            el.cfgRelayInput.value = info.relay_url ?? '';
-        }
+        await updateCurrentProviderLabels();
 
         if (info.codex_home) {
             try {
@@ -609,39 +601,6 @@ el.btnRestore.addEventListener('click', async () => {
     }
 });
 
-// ── 中转站地址保存 ──────────────────────
-
-el.btnRelaySave.addEventListener('click', async () => {
-    const url = el.cfgRelayInput.value.trim();
-    if (!url) {
-        showRelayMessage('请输入中转站地址', 'err');
-        return;
-    }
-    try {
-        const msg = await invoke('set_relay_url', { url });
-        showRelayMessage(msg, 'ok');
-        refreshCodexInfo();
-    } catch (e) {
-        showRelayMessage(String(e), 'err');
-    }
-});
-
-// Enter 键也能保存
-el.cfgRelayInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-        el.btnRelaySave.click();
-    }
-});
-
-function showRelayMessage(msg, type) {
-    el.cfgRelayMsg.textContent = msg;
-    el.cfgRelayMsg.className = `cfg-msg ${type === 'ok' ? 'ok' : 'err'}`;
-    setTimeout(() => {
-        el.cfgRelayMsg.textContent = '';
-        el.cfgRelayMsg.className = 'cfg-msg';
-    }, 5000);
-}
-
 function showConfigMessage(msg, type) {
     el.cfgMessage.textContent = msg;
     el.cfgMessage.className = `cfg-msg ${type === 'ok' ? 'ok' : 'err'}`;
@@ -659,10 +618,10 @@ async function refreshHealth() {
         const proxyStatus = await invoke('get_proxy_status');
         setRunning(proxyStatus === 'running');
     } catch {}
-    // Codex 环境检测
+    // Codex 环境检测 + 当前供应商
     try {
         const info = await invoke('get_codex_info');
-        el.ssRelay.textContent = info.relay_url ?? '--';
+        await updateCurrentProviderLabels();
 
         if (info.codex_home) {
             $('ss-codex-status').textContent = '已检测';
@@ -719,6 +678,24 @@ async function refreshHealth() {
     }
 }
 
+async function updateCurrentProviderLabels() {
+    let running = isRunning;
+    let runtime = null;
+    let list = [];
+    try { running = (await invoke('get_proxy_status')) === 'running'; } catch {}
+    try { runtime = await invoke('get_provider_runtime_status'); } catch {}
+    try { list = await invoke('list_providers'); } catch {}
+    const current = runtime?.current || list.find(item => item.id === activeProviderId) || list[0] || null;
+    if (current?.id) activeProviderId = current.id;
+    const name = current?.name || '未配置';
+    if (el.ssRelay) el.ssRelay.textContent = current ? name : '--';
+    if (el.cfgProviderName) el.cfgProviderName.textContent = current ? name : '未配置供应商';
+    if (el.providerRuntime) el.providerRuntime.textContent = running
+        ? `${name}${runtime?.switched ? ' · 已自动切换' : ' · 运行中'}`
+        : (current ? `${name} · 代理未运行` : '代理未运行');
+    return { running, runtime, current, list };
+}
+
 // ── 事件订阅 ────────────────────────────
 
 listen('interaction', (event) => {
@@ -741,16 +718,21 @@ listen('proxy-status', (event) => {
 // ── 供应商管理 ──────────────────────────
 let providerItems = [];
 let draggedProviderId = null;
+let activeProviderId = null;
 
 function providerCard(p, index) {
-    const current = index === 0;
+    const current = activeProviderId ? p.id === activeProviderId : index === 0;
     const status = p.last_status || '未测速';
     const latency = p.last_latency_ms != null ? `${p.last_latency_ms} ms` : '—';
+    const initials = (p.name || '供').trim().slice(0, 1).toUpperCase();
+    const statusOk = /^2\d\d/.test(status);
     return `<article class="provider-card${current ? ' current' : ''}" draggable="true" data-provider-id="${escapeHtml(p.id)}">
-        <div class="provider-drag" title="拖拽排序">⠿</div><div class="provider-main"><div class="provider-title"><strong>${escapeHtml(p.name || '未命名供应商')}</strong>${current ? '<span class="provider-current">当前使用</span>' : ''}<span class="provider-status ${status.startsWith('2') ? 'ok' : ''}">${escapeHtml(status)}</span></div>
-        <div class="provider-url">${escapeHtml(p.request_url || '')}</div><div class="provider-note">${escapeHtml(p.note || '未填写备注')}</div></div>
-        <div class="provider-metrics"><span>${latency}</span><small>${(p.models || []).length} 个模型</small></div>
-        <div class="provider-actions"><button class="provider-action" data-action="use" data-id="${p.id}">使用</button><button class="provider-action" data-action="test" data-id="${p.id}">测速</button><button class="provider-action" data-action="edit" data-id="${p.id}">编辑</button><button class="provider-action danger" data-action="delete" data-id="${p.id}">删除</button></div>
+        <button class="provider-drag" type="button" title="拖拽排序" aria-label="拖拽排序"><span>⋮⋮</span></button>
+        <div class="provider-avatar" aria-hidden="true">${escapeHtml(initials)}</div>
+        <div class="provider-main"><div class="provider-title"><strong>${escapeHtml(p.name || '未命名供应商')}</strong>${current ? '<span class="provider-current">当前使用</span>' : ''}</div>
+        <div class="provider-url">${escapeHtml(p.request_url || '未填写 API 请求地址')}</div><div class="provider-note">${escapeHtml(p.note || '未填写备注')}</div></div>
+        <div class="provider-health"><span class="provider-status ${statusOk ? 'ok' : ''}"><i></i>${escapeHtml(status)}</span><strong>${latency}</strong><small>${(p.models || []).length} 个模型</small></div>
+        <div class="provider-actions"><button class="provider-action provider-use" data-action="use" data-id="${p.id}" type="button" ${current ? 'disabled aria-disabled="true"' : ''}><span aria-hidden="true">${current ? '✓' : '▶'}</span><b>${current ? '使用中' : '使用'}</b></button><button class="provider-action" data-action="test" data-id="${p.id}" type="button" title="测速"><span aria-hidden="true">⌁</span></button><button class="provider-action" data-action="edit" data-id="${p.id}" type="button" title="编辑"><span aria-hidden="true">✎</span></button><button class="provider-action" data-action="duplicate" data-id="${p.id}" type="button" title="复制"><span aria-hidden="true">▣</span></button><button class="provider-action danger" data-action="delete" data-id="${p.id}" type="button" title="删除"><span aria-hidden="true">⌫</span></button></div>
     </article>`;
 }
 
@@ -758,6 +740,10 @@ async function loadProviders() {
     if (!el.providersList) return;
     try {
         providerItems = await invoke('list_providers');
+        try {
+            const runtime = await invoke('get_provider_runtime_status');
+            activeProviderId = runtime.current?.id || providerItems[0]?.id || null;
+        } catch { activeProviderId = providerItems[0]?.id || null; }
         el.providerCount.textContent = providerItems.length;
         el.providersList.innerHTML = providerItems.length ? providerItems.map(providerCard).join('') : '<div class="provider-empty">还没有供应商，点击右上角添加一个吧</div>';
         bindProviderEvents();
@@ -779,38 +765,72 @@ function bindProviderEvents() {
     el.providersList.querySelectorAll('[data-action]').forEach(btn => btn.addEventListener('click', async () => {
         const id = btn.dataset.id; const p = providerItems.find(x => x.id === id); if (!p) return;
         try {
-            if (btn.dataset.action === 'use') { providerItems = await invoke('use_provider', { id }); showToast(`已切换至 ${p.name}`, 'ok'); renderProviders(); }
+            if (btn.dataset.action === 'use') { providerItems = await invoke('use_provider', { id }); activeProviderId = id; showToast(`已切换至 ${p.name}`, 'ok'); renderProviders(); }
             if (btn.dataset.action === 'edit') openProviderModal(p);
+            if (btn.dataset.action === 'duplicate') { const copy = { ...p, id: '', name: `${p.name} 副本` }; openProviderModal(copy); }
             if (btn.dataset.action === 'delete') { if (!confirm(`删除供应商“${p.name}”？`)) return; providerItems = await invoke('delete_provider', { id }); renderProviders(); }
             if (btn.dataset.action === 'test') { btn.textContent = '测试中…'; const updated = await invoke('test_provider', { provider: p }); providerItems = providerItems.map(x => x.id === id ? updated : x); await invoke('save_provider', { provider: updated }); renderProviders(); }
         } catch (e) { showToast(String(e), 'err'); }
     }));
 }
 
-function renderProviders() { el.providerCount.textContent = providerItems.length; el.providersList.innerHTML = providerItems.length ? providerItems.map(providerCard).join('') : '<div class="provider-empty">还没有供应商，点击右上角添加一个吧</div>'; bindProviderEvents(); }
+function renderProviders() {
+    if (!providerItems.some(item => item.id === activeProviderId)) activeProviderId = providerItems[0]?.id || null;
+    el.providerCount.textContent = providerItems.length;
+    el.providersList.innerHTML = providerItems.length ? providerItems.map(providerCard).join('') : '<div class="provider-empty">还没有供应商，点击右上角添加一个吧</div>';
+    bindProviderEvents();
+}
+
+function populateModelPicker(models = [], selected = '') {
+    const select = $('provider-model');
+    const picker = $('provider-model-picker');
+    const menu = $('provider-model-menu');
+    const value = $('provider-model-value');
+    const cleanModels = [...new Set(models.filter(Boolean))];
+    select.innerHTML = '<option value="">使用默认模型</option>' + cleanModels.map(model => `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`).join('');
+    select.value = selected && cleanModels.includes(selected) ? selected : '';
+    menu.innerHTML = cleanModels.length ? cleanModels.map(model => `<button class="model-option${model === selected ? ' selected' : ''}" type="button" data-model="${escapeHtml(model)}" role="option"><span>${escapeHtml(model)}</span><i>${model === selected ? '✓' : ''}</i></button>`).join('') : '';
+    picker.hidden = cleanModels.length === 0;
+    value.textContent = selected && cleanModels.includes(selected) ? selected : (cleanModels.length ? '选择已下载模型' : '下载模型后可选择');
+    menu.querySelectorAll('.model-option').forEach(option => option.addEventListener('click', () => {
+        const model = option.dataset.model;
+        $('provider-default-model').value = model;
+        select.value = model;
+        value.textContent = model;
+        menu.querySelectorAll('.model-option').forEach(item => { item.classList.toggle('selected', item === option); item.querySelector('i').textContent = item === option ? '✓' : ''; });
+        menu.classList.remove('open');
+        $('provider-model-trigger').setAttribute('aria-expanded', 'false');
+    }));
+}
 
 function openProviderModal(p = null) {
     $('provider-modal-title').textContent = p ? '编辑供应商' : '添加供应商';
     $('provider-id').value = p?.id || ''; $('provider-name').value = p?.name || ''; $('provider-note').value = p?.note || '';
     $('provider-official-url').value = p?.official_url || ''; $('provider-api-key').value = p?.api_key || ''; $('provider-request-url').value = p?.request_url || '';
-    $('provider-full-url').checked = !!p?.full_url; $('provider-default-model').value = p?.default_model || ''; $('provider-model').innerHTML = '<option value="">使用默认模型</option>' + (p?.models || []).map(m => `<option>${escapeHtml(m)}</option>`).join('');
+    $('provider-full-url').checked = !!p?.full_url; $('provider-default-model').value = p?.default_model || '';
+    populateModelPicker(p?.models || [], p?.default_model || '');
     $('provider-modal-message').textContent = ''; $('provider-modal').style.display = 'flex';
 }
 function closeProviderModal() { $('provider-modal').style.display = 'none'; }
-function providerForm() { return { id: $('provider-id').value, name: $('provider-name').value.trim(), note: $('provider-note').value.trim(), official_url: $('provider-official-url').value.trim(), api_key: $('provider-api-key').value.trim(), request_url: $('provider-request-url').value.trim(), full_url: $('provider-full-url').checked, default_model: $('provider-model').value || $('provider-default-model').value.trim(), models: Array.from($('provider-model').options).slice(1).map(o => o.value).filter(Boolean) }; }
+function providerForm() { return { id: $('provider-id').value, name: $('provider-name').value.trim(), note: $('provider-note').value.trim(), official_url: $('provider-official-url').value.trim(), api_key: $('provider-api-key').value.trim(), request_url: $('provider-request-url').value.trim(), full_url: $('provider-full-url').checked, default_model: $('provider-default-model').value.trim(), models: Array.from($('provider-model').options).slice(1).map(o => o.value).filter(Boolean) }; }
 function renderProvidersFromState() { renderProviders(); }
 
 async function updateProviderRuntime() {
-    try { const s = await invoke('get_provider_runtime_status'); if (el.providerRuntime) el.providerRuntime.textContent = s.current ? `${s.current.name}${s.switched ? ' · 已自动切换' : ''}` : '代理未运行'; } catch {}
+    await updateCurrentProviderLabels();
 }
 
 $('btn-add-provider')?.addEventListener('click', () => openProviderModal());
 $('provider-modal-cancel')?.addEventListener('click', closeProviderModal);
+$('provider-modal-close')?.addEventListener('click', closeProviderModal);
 $('provider-modal')?.addEventListener('click', e => { if (e.target === e.currentTarget) closeProviderModal(); });
+$('provider-model-trigger')?.addEventListener('click', () => { const menu = $('provider-model-menu'); const trigger = $('provider-model-trigger'); const open = menu.classList.toggle('open'); trigger.setAttribute('aria-expanded', String(open)); });
+$('provider-default-model')?.addEventListener('input', e => { const value = $('provider-model-value'); if (value && !e.target.value) value.textContent = $('provider-model-picker').hidden ? '下载模型后可选择' : '选择已下载模型'; });
+$('provider-request-url')?.addEventListener('input', () => { $('provider-modal-message').textContent = ''; });
+$('provider-modal')?.addEventListener('keydown', e => { if (e.key === 'Escape') closeProviderModal(); });
 $('provider-modal-save')?.addEventListener('click', async () => { try { const p = providerForm(); if (!p.name || !p.request_url) throw new Error('请填写供应商名称和 API 请求地址'); providerItems = await invoke('save_provider', { provider: p }); closeProviderModal(); renderProviders(); showToast('供应商已保存', 'ok'); } catch (e) { $('provider-modal-message').textContent = String(e); } });
-$('btn-provider-models')?.addEventListener('click', async () => { const p = providerForm(); const btn = $('btn-provider-models'); try { btn.textContent = '下载中…'; const models = await invoke('fetch_provider_models', { provider: p }); $('provider-model').innerHTML = '<option value="">使用默认模型</option>' + models.map(m => `<option>${escapeHtml(m)}</option>`).join(''); showToast(`已获取 ${models.length} 个模型`, 'ok'); } catch (e) { $('provider-modal-message').textContent = `模型获取失败：${e}`; } finally { btn.textContent = '下载模型'; } });
+$('btn-provider-models')?.addEventListener('click', async () => { const p = providerForm(); const btn = $('btn-provider-models'); try { btn.classList.add('loading'); btn.querySelector('b').textContent = '下载中…'; const models = await invoke('fetch_provider_models', { provider: p }); populateModelPicker(models, $('provider-default-model').value.trim()); showToast(`已获取 ${models.length} 个模型`, 'ok'); } catch (e) { $('provider-modal-message').textContent = `模型获取失败：${e}`; } finally { btn.classList.remove('loading'); btn.querySelector('b').textContent = '下载模型'; } });
 
-listen('provider-switched', event => { const p = event.payload || {}; if (el.providerRuntime) el.providerRuntime.textContent = `${p.provider || '供应商'} · 已自动切换`; showToast(`上游异常，已自动切换至 ${p.provider || '下一供应商'}`, 'ok'); loadProviders(); });
+listen('provider-switched', event => { const p = event.payload || {}; activeProviderId = p.provider_id || activeProviderId; if (el.providerRuntime) el.providerRuntime.textContent = `${p.provider || '供应商'} · 已自动切换`; showToast(`上游异常，已自动切换至 ${p.provider || '下一供应商'}`, 'ok'); loadProviders(); updateCurrentProviderLabels(); });
 
 // ── Skills 管理 ──────────────────────────
 
@@ -944,7 +964,7 @@ async function init() {
     // 加载 Codex 信息
     try {
         const info = await invoke('get_codex_info');
-        el.ssRelay.textContent = info.relay_url ?? '--';
+        await updateCurrentProviderLabels();
     } catch {
         // 忽略
     }

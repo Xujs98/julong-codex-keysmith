@@ -1066,6 +1066,7 @@ async fn switch_provider(
         let _ = app.emit(
             "provider-switched",
             serde_json::json!({
+                "provider_id": provider.id,
                 "provider": provider.name,
                 "url": url,
                 "reason": reason,
