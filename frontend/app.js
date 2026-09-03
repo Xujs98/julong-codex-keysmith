@@ -461,11 +461,45 @@ function renderInteraction(event) {
 }
 
 const activityLabels = { crack: '破解', reverse: '逆向', pentest: '渗透', tampered: '已篡改', general: '通用' };
+const activityFallbackCommands = {
+    crack: '$ inspect-license --target active',
+    reverse: '$ trace-binary --target active',
+    pentest: '$ probe-surface --target active',
+    tampered: '$ mutate --response --rules active',
+    general: '$ execute-task --target active',
+};
+
+function setBotActivityScreen(bot, active, command = '') {
+    const title = bot.querySelector('.bot-screen-title');
+    const commandNode = bot.querySelector('.bot-command');
+    const cursor = bot.querySelector('.bot-cursor');
+    if (!title || !commandNode || !cursor) return;
+
+    if (active) {
+        const nextCommand = command || activityFallbackCommands[bot.dataset.category] || activityFallbackCommands.general;
+        if (commandNode.textContent !== nextCommand) {
+            commandNode.textContent = nextCommand;
+            commandNode.classList.remove('command-enter');
+            void commandNode.offsetWidth;
+            commandNode.classList.add('command-enter');
+        }
+        commandNode.hidden = false;
+        cursor.hidden = false;
+        title.hidden = true;
+    } else {
+        commandNode.textContent = '';
+        commandNode.classList.remove('command-enter');
+        commandNode.hidden = true;
+        cursor.hidden = true;
+        title.hidden = false;
+    }
+}
 
 function updateActivityStatus(payload = {}) {
     const status = payload.status || 'idle';
     const category = payload.category || 'general';
-    const activeCategories = new Set(payload.active_categories || []);
+    const activeCategories = new Set(Array.isArray(payload.active_categories) ? payload.active_categories : []);
+    const commands = payload.commands && typeof payload.commands === 'object' ? payload.commands : {};
     const running = status === 'running';
     const hasCategory = activeCategories.size > 0;
     const active = running && (hasCategory ? activeCategories : new Set([category]));
@@ -475,8 +509,12 @@ function updateActivityStatus(payload = {}) {
         const isActive = active.has(key);
         bot.classList.toggle('active', isActive);
         bot.classList.toggle('idle', !isActive);
+        bot.dataset.activityActive = String(isActive);
         const mode = bot.querySelector('.bot-mode');
         if (mode) mode.textContent = isActive ? '敲击中 · Codex 执行' : '悠闲喝咖啡';
+        const command = commands[key] || (key === category ? payload.command : '');
+        bot.dataset.activityCommand = command || activityFallbackCommands[key] || activityFallbackCommands.general;
+        setBotActivityScreen(bot, isActive, command);
     });
 
     const state = $('task-state');
@@ -503,10 +541,18 @@ function pulseRobot(category) {
     bot.classList.remove('idle');
     const mode = bot.querySelector('.bot-mode');
     if (mode) mode.textContent = '敲击中 · 响应已篡改';
+    setBotActivityScreen(bot, true, activityFallbackCommands[category]);
     setTimeout(() => {
-        bot.classList.remove('active', 'pulse');
+        bot.classList.remove('pulse');
+        if (bot.dataset.activityActive === 'true') {
+            if (mode) mode.textContent = '敲击中 · Codex 执行';
+            setBotActivityScreen(bot, true, bot.dataset.activityCommand);
+            return;
+        }
+        bot.classList.remove('active');
         bot.classList.add('idle');
         if (mode) mode.textContent = '悠闲喝咖啡';
+        setBotActivityScreen(bot, false);
     }, 1600);
 }
 

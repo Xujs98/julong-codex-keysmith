@@ -1117,6 +1117,36 @@ async fn health_check() -> impl axum::response::IntoResponse {
     )
 }
 
+/// 为实时活动面板生成与当前请求关联的展示命令。
+/// 该字符串只通过 activity-status 事件发送给 UI，不会交给 shell 执行。
+fn activity_command(
+    category: &crate::core::Category,
+    method: &str,
+    path_and_query: &str,
+) -> String {
+    let route: String = path_and_query
+        .split('?')
+        .next()
+        .unwrap_or("/")
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || "/._-".contains(*ch))
+        .take(42)
+        .collect();
+    let route = if route.is_empty() { "/" } else { &route };
+    let action = match category.as_str() {
+        "crack" => "inspect-license",
+        "reverse" => "trace-binary",
+        "pentest" => "probe-surface",
+        _ => "execute-task",
+    };
+    format!(
+        "$ {} --method {} --route {}",
+        action,
+        method.to_ascii_uppercase(),
+        route
+    )
+}
+
 async fn handle_proxy(
     req: axum::extract::Request,
     core: Arc<MitmCore>,
@@ -1151,14 +1181,14 @@ async fn handle_proxy(
         .map(|pq| pq.to_string())
         .unwrap_or_else(|| parts.uri.path().to_string());
 
+    // 阶段 1: 请求拦截 + 转发上游
+    let method = parts.method.clone();
     // 请求刚开始转发即通知活动面板；任务 guard 会在错误、断流或正常完成时统一释放。
     let category = serde_json::from_slice::<serde_json::Value>(&bytes)
         .map(|data| crate::core::categorize(&crate::core::extract_user(&data)))
         .unwrap_or(crate::core::Category::General);
-    let activity_request = activity.start(category);
-
-    // 阶段 1: 请求拦截 + 转发上游
-    let method = parts.method.clone();
+    let command = activity_command(&category, method.as_str(), &path_and_query);
+    let activity_request = activity.start_with_command(category, command);
     let headers = parts.headers.clone();
     let upstream = match core
         .handle_request(

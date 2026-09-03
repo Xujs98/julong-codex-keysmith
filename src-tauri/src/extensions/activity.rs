@@ -12,11 +12,20 @@ pub struct ActivityStatus {
     pub category: String,
     pub active_categories: Vec<String>,
     pub active_count: u64,
+    /// 当前活动类别对应的模拟命令，仅用于仪表盘实时展示，不会在本机执行。
+    pub command: String,
+    /// 同时运行多个请求时，为每个机器人保留各自的展示命令。
+    pub commands: BTreeMap<String, String>,
+}
+
+struct ActiveTask {
+    count: u64,
+    command: String,
 }
 
 pub struct ActivityTracker {
     app_handle: AppHandle,
-    active: Mutex<BTreeMap<String, u64>>,
+    active: Mutex<BTreeMap<String, ActiveTask>>,
 }
 
 pub struct ActiveRequest {
@@ -33,19 +42,38 @@ impl ActivityTracker {
     }
 
     pub fn start(self: &Arc<Self>, category: Category) -> ActiveRequest {
-        self.start_label(&category.to_string())
+        let label = category.to_string();
+        self.start_label(&label, default_command(&label))
+    }
+
+    /// 记录请求对应的展示命令。命令只会作为 activity-status 事件发送给前端。
+    pub fn start_with_command(
+        self: &Arc<Self>,
+        category: Category,
+        command: impl Into<String>,
+    ) -> ActiveRequest {
+        let label = category.to_string();
+        self.start_label(&label, &command.into())
     }
 
     /// 响应被篡改时单独标记一个短生命周期活动，让“已篡改”机器人也能真实联动。
     pub fn start_tampered(self: &Arc<Self>) -> ActiveRequest {
-        self.start_label("tampered")
+        self.start_label("tampered", "$ mutate --response --rules active")
     }
 
-    fn start_label(self: &Arc<Self>, category: &str) -> ActiveRequest {
+    fn start_label(self: &Arc<Self>, category: &str, command: &str) -> ActiveRequest {
         let category = category.to_string();
+        let command = normalize_command(command, default_command(&category));
         {
             let mut active = self.active.lock().unwrap();
-            *active.entry(category.clone()).or_insert(0) += 1;
+            let task = active
+                .entry(category.clone())
+                .or_insert_with(|| ActiveTask {
+                    count: 0,
+                    command: command.clone(),
+                });
+            task.count += 1;
+            task.command = command;
         }
         self.emit_running(&category);
         ActiveRequest {
@@ -62,9 +90,9 @@ impl ActivityTracker {
     fn finish(&self, category: &str) {
         {
             let mut active = self.active.lock().unwrap();
-            if let Some(count) = active.get_mut(category) {
-                *count = count.saturating_sub(1);
-                if *count == 0 {
+            if let Some(task) = active.get_mut(category) {
+                task.count = task.count.saturating_sub(1);
+                if task.count == 0 {
                     active.remove(category);
                 }
             }
@@ -85,7 +113,16 @@ impl ActivityTracker {
     fn emit(&self, status: &str, category: &str) {
         let active = self.active.lock().unwrap();
         let active_categories: Vec<String> = active.keys().cloned().collect();
-        let active_count = active.values().sum();
+        let active_count = active.values().map(|task| task.count).sum();
+        let commands: BTreeMap<String, String> = active
+            .iter()
+            .map(|(label, task)| (label.clone(), task.command.clone()))
+            .collect();
+        let command = commands
+            .get(category)
+            .cloned()
+            .or_else(|| commands.values().next().cloned())
+            .unwrap_or_default();
         drop(active);
         let _ = self.app_handle.emit(
             "activity-status",
@@ -94,6 +131,8 @@ impl ActivityTracker {
                 category: category.to_string(),
                 active_categories,
                 active_count,
+                command,
+                commands,
             },
         );
     }
@@ -102,5 +141,24 @@ impl ActivityTracker {
 impl Drop for ActiveRequest {
     fn drop(&mut self) {
         self.tracker.finish(&self.category);
+    }
+}
+
+fn default_command(category: &str) -> &'static str {
+    match category {
+        "crack" => "$ inspect --mode crack --target active",
+        "reverse" => "$ trace --mode reverse --target active",
+        "pentest" => "$ probe --mode pentest --target active",
+        "tampered" => "$ mutate --response --rules active",
+        _ => "$ codex --execute --target active",
+    }
+}
+
+fn normalize_command(command: &str, fallback: &str) -> String {
+    let normalized = command.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        fallback.to_string()
+    } else {
+        normalized.chars().take(120).collect()
     }
 }
