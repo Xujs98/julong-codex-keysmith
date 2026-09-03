@@ -222,6 +222,11 @@ pub fn activate(provider: &Provider, proxy_active: bool) -> Result<String, Strin
             out = format!("{}{}{}", head, body, tail);
         }
         atomic_write(&cfg, out.as_bytes())?;
+        if let Some(manager) = DeployManager::new() {
+            if let Err(error) = manager.refresh_config_integrity() {
+                tracing::warn!("refresh provider config integrity failed: {}", error);
+            }
+        }
     }
     Ok(url)
 }

@@ -45,6 +45,11 @@ const el = {
     cfgTransactionStatus: $('cfg-transaction-status'),
     cfgMessage:    $('cfg-message'),
     cfgMemoryCount: $('cfg-memory-count'),
+    stopConfirmEnabled: $('stop-confirm-enabled'),
+    stopConfirmEnabledLabel: $('stop-confirm-enabled-label'),
+    stopConfirmSeconds: $('stop-confirm-seconds'),
+    stopConfirmSettingsHint: $('stop-confirm-settings-hint'),
+    stopSettingsDuration: $('stop-settings-duration'),
     overviewStatus: $('overview-status'),
     overviewStatusMeta: $('overview-status-meta'),
     overviewIntegrity: $('overview-integrity'),
@@ -63,6 +68,9 @@ let proxyBusy = false;
 let stopConfirmTimer = null;
 let stopConfirmRemaining = 0;
 let stopConfirmPreviousFocus = null;
+const STOP_CONFIRM_SETTINGS_KEY = 'julong-stop-confirm-settings';
+const STOP_CONFIRM_DEFAULTS = Object.freeze({ enabled: true, seconds: 3 });
+let stopConfirmSettings = readStopConfirmSettings();
 let logEntries = 0;
 let logEvents = [];
 let logFilter = 'all';
@@ -180,6 +188,44 @@ function showToast(msg, type = 'err') {
     setTimeout(() => { t.className = `toast ${type}`; }, 4000);
 }
 
+function readStopConfirmSettings() {
+    try {
+        const raw = localStorage.getItem(STOP_CONFIRM_SETTINGS_KEY);
+        const parsed = raw ? JSON.parse(raw) : {};
+        const seconds = Number(parsed.seconds);
+        return {
+            enabled: parsed.enabled !== false,
+            seconds: Number.isFinite(seconds) ? Math.min(30, Math.max(1, Math.round(seconds))) : STOP_CONFIRM_DEFAULTS.seconds,
+        };
+    } catch {
+        return { ...STOP_CONFIRM_DEFAULTS };
+    }
+}
+
+function syncStopConfirmSettingsUI() {
+    const { enabled, seconds } = stopConfirmSettings;
+    if (el.stopConfirmEnabled) el.stopConfirmEnabled.checked = enabled;
+    if (el.stopConfirmEnabledLabel) el.stopConfirmEnabledLabel.textContent = enabled ? '已开启' : '已关闭';
+    if (el.stopConfirmSeconds) {
+        el.stopConfirmSeconds.value = String(seconds);
+        el.stopConfirmSeconds.disabled = !enabled;
+    }
+    if (el.stopConfirmSettingsHint) el.stopConfirmSettingsHint.textContent = enabled ? `停止代理时等待 ${seconds} 秒` : '已关闭等待保护，停止代理时可立即确认';
+    if (el.stopSettingsDuration) el.stopSettingsDuration.classList.toggle('disabled', !enabled);
+}
+
+function saveStopConfirmSettings(next) {
+    const seconds = Number(next.seconds);
+    stopConfirmSettings = {
+        enabled: next.enabled !== false,
+        seconds: Number.isFinite(seconds) ? Math.min(30, Math.max(1, Math.round(seconds))) : STOP_CONFIRM_DEFAULTS.seconds,
+    };
+    try { localStorage.setItem(STOP_CONFIRM_SETTINGS_KEY, JSON.stringify(stopConfirmSettings)); } catch {}
+    syncStopConfirmSettingsUI();
+}
+
+syncStopConfirmSettingsUI();
+
 // ── 代理控制 ────────────────────────────
 
 el.navToggleProxy.addEventListener('click', async () => {
@@ -212,7 +258,7 @@ async function doStartProxy() {
         const msg = await invoke('start_proxy');
         setRunning(true);
         showToast(msg, 'ok');
-        refreshHealth();
+        await refreshHealth();
     } catch (e) {
         showToast(String(e), 'err');
         refreshHealth();
@@ -224,7 +270,7 @@ async function doStopProxy() {
         const msg = await invoke('stop_proxy');
         setRunning(false);
         showToast(msg, 'ok');
-        refreshHealth();
+        await refreshHealth();
     } catch (e) {
         showToast(String(e), 'err');
         refreshHealth();
@@ -244,24 +290,30 @@ function showStopConfirm() {
 
     if (stopConfirmTimer) clearInterval(stopConfirmTimer);
     stopConfirmPreviousFocus = document.activeElement;
-    stopConfirmRemaining = 5;
-    approve.disabled = true;
-    count.textContent = String(stopConfirmRemaining);
-    approveCount.textContent = String(stopConfirmRemaining);
-    hint.textContent = '倒计时结束后可确认停止';
-    status.textContent = '请确认这是你想要的操作';
-    if (progress) progress.style.width = '0%';
-    if (ring) ring.style.setProperty('--stop-progress', '0deg');
+    const settings = stopConfirmSettings;
+    stopConfirmRemaining = settings.enabled ? settings.seconds : 0;
+    approve.disabled = settings.enabled && stopConfirmRemaining > 0;
+    count.textContent = settings.enabled ? String(stopConfirmRemaining) : '✓';
+    approveCount.textContent = settings.enabled ? String(stopConfirmRemaining) : '';
+    hint.textContent = settings.enabled ? '倒计时结束后可确认停止' : '已关闭等待保护，可立即确认停止';
+    status.textContent = settings.enabled ? '请确认这是你想要的操作' : '等待保护已关闭';
+    if (progress) progress.style.width = settings.enabled ? '0%' : '100%';
+    if (ring) ring.style.setProperty('--stop-progress', settings.enabled ? '0deg' : '360deg');
     modal.style.display = 'flex';
     document.body.classList.add('modal-open');
     $('stop-confirm-cancel')?.focus();
+
+    if (!settings.enabled) {
+        approve.focus();
+        return;
+    }
 
     stopConfirmTimer = setInterval(() => {
         stopConfirmRemaining -= 1;
         count.textContent = String(Math.max(0, stopConfirmRemaining));
         approveCount.textContent = String(Math.max(0, stopConfirmRemaining));
-        if (progress) progress.style.width = `${((5 - stopConfirmRemaining) / 5) * 100}%`;
-        if (ring) ring.style.setProperty('--stop-progress', `${((5 - stopConfirmRemaining) / 5) * 360}deg`);
+        if (progress) progress.style.width = `${((settings.seconds - stopConfirmRemaining) / settings.seconds) * 100}%`;
+        if (ring) ring.style.setProperty('--stop-progress', `${((settings.seconds - stopConfirmRemaining) / settings.seconds) * 360}deg`);
         if (stopConfirmRemaining <= 0) {
             clearInterval(stopConfirmTimer);
             stopConfirmTimer = null;
@@ -311,6 +363,14 @@ document.addEventListener('keydown', (event) => {
         event.preventDefault();
         closeStopConfirm();
     }
+});
+
+el.stopConfirmEnabled?.addEventListener('change', (event) => {
+    saveStopConfirmSettings({ enabled: event.target.checked, seconds: el.stopConfirmSeconds?.value });
+    showToast(event.target.checked ? '已开启停止等待保护' : '已关闭停止等待保护', 'ok');
+});
+el.stopConfirmSeconds?.addEventListener('change', (event) => {
+    saveStopConfirmSettings({ enabled: el.stopConfirmEnabled?.checked, seconds: event.target.value });
 });
 
 function showPreflight(result) {
@@ -852,6 +912,10 @@ function openProviderModal(p = null) {
     $('provider-id').value = p?.id || ''; $('provider-name').value = p?.name || ''; $('provider-note').value = p?.note || '';
     $('provider-official-url').value = p?.official_url || ''; $('provider-api-key').value = p?.api_key || ''; $('provider-request-url').value = p?.request_url || '';
     $('provider-full-url').checked = !!p?.full_url; $('provider-default-model').value = p?.default_model || '';
+    $('provider-api-key').type = 'password';
+    $('provider-key-toggle').classList.remove('is-visible');
+    $('provider-key-toggle').title = '显示 API Key';
+    $('provider-key-toggle').setAttribute('aria-label', '显示 API Key');
     populateModelPicker(p?.models || [], p?.default_model || '');
     $('provider-modal-message').textContent = ''; $('provider-modal').style.display = 'flex';
     requestAnimationFrame(() => $('provider-name').focus());
@@ -924,6 +988,16 @@ $('provider-modal')?.addEventListener('click', e => { if (e.target === e.current
 $('provider-model-trigger')?.addEventListener('click', () => { const menu = $('provider-model-menu'); const trigger = $('provider-model-trigger'); const open = menu.classList.toggle('open'); trigger.setAttribute('aria-expanded', String(open)); });
 $('provider-default-model')?.addEventListener('input', e => { const value = $('provider-model-value'); if (value && !e.target.value) value.textContent = $('provider-model-picker').hidden ? '下载模型后可选择' : '选择已下载模型'; });
 $('provider-request-url')?.addEventListener('input', () => { $('provider-modal-message').textContent = ''; });
+$('provider-key-toggle')?.addEventListener('click', () => {
+    const input = $('provider-api-key');
+    const button = $('provider-key-toggle');
+    const visible = input.type === 'password';
+    input.type = visible ? 'text' : 'password';
+    button.classList.toggle('is-visible', visible);
+    button.title = visible ? '隐藏 API Key' : '显示 API Key';
+    button.setAttribute('aria-label', button.title);
+    input.focus();
+});
 $('provider-modal')?.addEventListener('keydown', e => { if (e.key === 'Escape') closeProviderModal(); });
 $('provider-delete-cancel')?.addEventListener('click', closeProviderDeleteModal);
 $('provider-delete-confirm')?.addEventListener('click', confirmProviderDelete);

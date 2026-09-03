@@ -126,6 +126,20 @@ body.modal-open{overflow:hidden}
 .theme-card small{margin-top:2px;font-size:8.5px}
 .theme-card i{width:18px;height:18px;border-width:1.5px;font-size:10px}
 .theme-swatch{width:30px;height:30px;flex:none;border-radius:9px;box-shadow:inset 0 1px 1px rgba(255,255,255,.5),0 4px 9px rgba(45,66,96,.12)}
+.stop-settings-block{padding:14px 16px 13px}
+.stop-settings-block .cfg-block-head{margin-bottom:10px}
+.stop-settings-row,.stop-settings-duration{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 11px;border:1px solid var(--line-color);border-radius:11px;background:linear-gradient(135deg,var(--surface-bg),var(--surface-soft))}
+.stop-settings-copy strong,.stop-settings-duration strong{display:block;color:var(--ink);font-size:11px}
+.stop-settings-copy small,.stop-settings-duration small{display:block;margin-top:3px;color:var(--ink-faint);font-size:9px}
+.stop-settings-switch{flex:none}
+.stop-settings-switch b{min-width:36px;color:var(--accent-strong);font-size:9px}
+.stop-settings-duration{margin-top:7px;padding:8px 11px;background:var(--surface-soft)}
+.stop-settings-duration.disabled{opacity:.52}
+.seconds-input{height:30px;display:flex;align-items:center;gap:6px;padding:0 8px 0 10px;border:1px solid var(--control-border);border-radius:8px;background:var(--surface-strong);color:var(--ink-soft);font-size:10px}
+.seconds-input:focus-within{border-color:var(--accent-main);box-shadow:0 0 0 3px var(--accent-ring)}
+.seconds-input input{width:38px;height:100%;padding:0;border:0;outline:0;background:transparent;color:var(--ink);font-size:12px;font-weight:750;text-align:center}
+.seconds-input input:disabled{cursor:not-allowed;color:var(--ink-faint)}
+.seconds-input span{color:var(--ink-faint);font-size:9px}
 
 /* 供应商工作台 */
 .providers-scroll{padding:20px 24px;overflow:auto}
@@ -206,6 +220,17 @@ body.modal-open{overflow:hidden}
 .provider-form-grid .cfg-input{width:100%;height:40px;padding:0 12px;border-radius:10px;background:var(--surface-strong);font-size:11px;box-shadow:inset 0 1px 2px rgba(30,50,90,.03)}
 .provider-form-grid .cfg-input::placeholder{color:color-mix(in srgb,var(--ink-faint) 66%,transparent)}
 .provider-form-grid .cfg-input:focus{border-color:var(--accent-main);box-shadow:0 0 0 3px var(--accent-ring)}
+.field-control{height:43px;display:flex;align-items:center;position:relative;overflow:hidden;border:1px solid var(--control-border);border-radius:11px;background:linear-gradient(180deg,var(--surface-strong),var(--surface-bg));box-shadow:0 1px 2px rgba(30,50,90,.035),inset 0 1px 0 rgba(255,255,255,.78);transition:border-color .18s ease,box-shadow .18s ease,background .18s ease,transform .18s ease}
+.field-control:hover{border-color:color-mix(in srgb,var(--accent-main) 48%,var(--control-border));background:var(--surface-strong)}
+.field-control:focus-within{border-color:var(--accent-main);background:var(--surface-strong);box-shadow:0 0 0 3px var(--accent-ring),0 7px 18px var(--shadow-color);transform:translateY(-1px)}
+.field-control-icon{width:35px;height:100%;display:grid;place-items:center;flex:none;color:var(--ink-faint);transition:color .18s ease}
+.field-control-icon svg,.field-control-action svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.field-control:focus-within .field-control-icon{color:var(--accent-strong)}
+.provider-form-grid .field-control .cfg-input{height:100%;min-width:0;padding:0 10px 0 0;border:0;border-radius:0;background:transparent;box-shadow:none;font-size:11.5px;font-weight:560}
+.provider-form-grid .field-control .cfg-input:focus{border:0;box-shadow:none}
+.field-control-action{width:36px;height:31px;display:grid;place-items:center;flex:none;margin-right:5px;padding:0;border:0;border-radius:8px;background:transparent;color:var(--ink-faint);transition:.16s}
+.field-control-action:hover{background:var(--accent-soft);color:var(--accent-strong)}
+.field-control-action .eye-closed{display:none}.field-control-action.is-visible .eye-open{display:none}.field-control-action.is-visible .eye-closed{display:block}
 .switch-control{display:inline-flex;align-items:center;gap:6px;color:var(--ink-soft);font-size:9px;font-weight:650;cursor:pointer;white-space:nowrap}
 .switch-control input{position:absolute;opacity:0;pointer-events:none}
 .switch-track{width:31px;height:18px;display:block;position:relative;border-radius:99px;background:color-mix(in srgb,var(--ink-faint) 28%,transparent);transition:.18s}

@@ -70,13 +70,13 @@
             <span id="stop-confirm-status" aria-live="polite">请确认这是你想要的操作</span>
         </div>
         <div class="stop-countdown" aria-live="polite">
-            <div class="stop-countdown-ring"><strong id="stop-confirm-count">5</strong><small>SEC</small></div>
+            <div class="stop-countdown-ring"><strong id="stop-confirm-count">3</strong><small>SEC</small></div>
             <div class="stop-countdown-copy"><strong>确认保护</strong><span id="stop-confirm-hint">倒计时结束后可确认停止</span></div>
             <div class="stop-countdown-track"><span id="stop-confirm-progress"></span></div>
         </div>
         <div class="stop-confirm-actions">
             <button class="btn stop-cancel" id="stop-confirm-cancel">继续运行</button>
-            <button class="btn stop-approve" id="stop-confirm-approve" disabled>确认停止 <span id="stop-approve-count">5</span></button>
+            <button class="btn stop-approve" id="stop-confirm-approve" disabled>确认停止 <span id="stop-approve-count">3</span></button>
         </div>
     </div>
 </div>
@@ -275,6 +275,17 @@
                         <button class="theme-card" data-theme="aurora"><span class="theme-swatch aurora"></span><span><strong>极光</strong><small>夜航 · 灵动</small></span><i></i></button>
                     </div>
                 </div>
+                <div class="cfg-block stop-settings-block">
+                    <div class="cfg-block-head">停止代理确认</div>
+                    <div class="stop-settings-row">
+                        <div class="stop-settings-copy"><strong>等待保护</strong><small>停止代理前先等待，避免误触导致请求中断。</small></div>
+                        <label class="switch-control stop-settings-switch"><input id="stop-confirm-enabled" type="checkbox" checked><span class="switch-track"></span><b id="stop-confirm-enabled-label">已开启</b></label>
+                    </div>
+                    <div class="stop-settings-duration" id="stop-settings-duration">
+                        <div><strong>等待时长</strong><small id="stop-confirm-settings-hint">停止代理时等待 3 秒</small></div>
+                        <label class="seconds-input"><input id="stop-confirm-seconds" type="number" min="1" max="30" step="1" value="3" aria-label="等待秒数"><span>秒</span></label>
+                    </div>
+                </div>
                 <div class="cfg-block">
                     <div class="cfg-block-head">部署操作</div>
                     <div class="cfg-ops">
@@ -333,16 +344,16 @@
             <section class="provider-form-section">
                 <div class="provider-section-head"><span>01</span><div><strong>基础信息</strong><small>用于识别和管理这条连接</small></div></div>
                 <div class="provider-form-grid">
-                    <label class="field">供应商名称<span class="field-hint">必填</span><input id="provider-name" class="cfg-input" placeholder="例如：主力供应商" autocomplete="off"></label>
-                    <label class="field">备注<span class="field-hint">可选</span><input id="provider-note" class="cfg-input" placeholder="例如：主力线路" autocomplete="off"></label>
-                    <label class="field field-span-2">官网链接<span class="field-hint">可选，用于记录服务商入口</span><input id="provider-official-url" class="cfg-input" placeholder="https://provider.example.com" inputmode="url"></label>
+                    <label class="field">供应商名称<span class="field-hint">必填</span><span class="field-control"><span class="field-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 20V8l8-4 8 4v12"/><path d="M9 20v-5h6v5M8 10h.01M12 10h.01M16 10h.01"/></svg></span><input id="provider-name" class="cfg-input" placeholder="例如：主力供应商" autocomplete="off"></span></label>
+                    <label class="field">备注<span class="field-hint">可选</span><span class="field-control"><span class="field-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></span><input id="provider-note" class="cfg-input" placeholder="例如：主力线路" autocomplete="off"></span></label>
+                    <label class="field field-span-2">官网链接<span class="field-hint">可选，用于记录服务商入口</span><span class="field-control"><span class="field-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg></span><input id="provider-official-url" class="cfg-input" placeholder="https://provider.example.com" inputmode="url"></span></label>
                 </div>
             </section>
             <section class="provider-form-section">
                 <div class="provider-section-head"><span>02</span><div><strong>连接配置</strong><small>凭据仅写入本机 Codex 配置目录</small></div></div>
                 <div class="provider-form-grid">
-                    <label class="field field-span-2">API Key<span class="field-hint">服务商提供的访问密钥</span><input id="provider-api-key" class="cfg-input" type="password" placeholder="sk-..." autocomplete="off"></label>
-                    <label class="field field-span-2">API 请求地址<div class="field-inline-label"><span class="field-hint">OpenAI 兼容的 Responses API 地址</span><span class="switch-control"><input id="provider-full-url" type="checkbox"><span class="switch-track"></span><b>完整 URL</b></span></div><input id="provider-request-url" class="cfg-input" placeholder="https://api.example.com/v1" inputmode="url"></label>
+                    <label class="field field-span-2">API Key<span class="field-hint">服务商提供的访问密钥</span><span class="field-control"><span class="field-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 8-8M16 7l2 2M14 9l2 2"/></svg></span><input id="provider-api-key" class="cfg-input" type="password" placeholder="sk-..." autocomplete="off"><button class="field-control-action" id="provider-key-toggle" type="button" title="显示 API Key" aria-label="显示 API Key"><svg class="eye-open" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg><svg class="eye-closed" viewBox="0 0 24 24" aria-hidden="true"><path d="m4 4 16 16M10.6 6.2A10 10 0 0 1 12 6c6 0 9.5 6 9.5 6a16 16 0 0 1-2.1 2.7M7.2 7.2C4.2 9 2.5 12 2.5 12s3.5 6 9.5 6a9 9 0 0 0 3-.5M10 10a3 3 0 0 0 4 4"/></svg></button></span></label>
+                    <label class="field field-span-2">API 请求地址<div class="field-inline-label"><span class="field-hint">OpenAI 兼容的 Responses API 地址</span><span class="switch-control"><input id="provider-full-url" type="checkbox"><span class="switch-track"></span><b>完整 URL</b></span></div><span class="field-control"><span class="field-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 12h8M12 8v8"/><circle cx="12" cy="12" r="4"/><circle cx="5" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="m6.5 6.5 2.7 2.7M17.5 6.5l-2.7 2.7M6.5 17.5l2.7-2.7M17.5 17.5l-2.7-2.7"/></svg></span><input id="provider-request-url" class="cfg-input" placeholder="https://api.example.com/v1" inputmode="url"></span></label>
                 </div>
             </section>
             <section class="provider-form-section provider-model-section">

@@ -505,6 +505,41 @@ impl DeployManager {
         }
     }
 
+    /// 供应商切换会合法改写 config.toml 中的模型与 provider 字段。
+    /// bridge.md 仍与原部署清单一致、核心注入字段仍存在时，刷新配置哈希，
+    /// 避免把应用自身的配置更新误报为“文件发生漂移”。
+    pub fn refresh_config_integrity(&self) -> Result<bool, String> {
+        if self.has_pending_transaction() {
+            return Ok(false);
+        }
+
+        let manifest_path = self.codex_home.join(DEPLOYMENT_MANIFEST);
+        let Some(mut manifest) = read_deployment_manifest(&manifest_path) else {
+            return Ok(false);
+        };
+
+        let bridge_path = self.codex_home.join("bridge.md");
+        if sha256_file(&bridge_path)? != manifest.bridge_sha256 {
+            return Ok(false);
+        }
+
+        let config_path = self.codex_home.join("config.toml");
+        let config = fs::read_to_string(&config_path)
+            .map_err(|e| format!("read config for integrity refresh failed: {e}"))?;
+        let instructions =
+            Regex::new(r#"(?m)^\s*model_instructions_file\s*=\s*"\./bridge\.md"\s*$"#)
+                .map_err(|e| e.to_string())?;
+        let provider_url =
+            Regex::new(r#"(?m)^\s*base_url\s*=\s*"[^"]+"\s*$"#).map_err(|e| e.to_string())?;
+        if !instructions.is_match(&config) || !provider_url.is_match(&config) {
+            return Ok(false);
+        }
+
+        manifest.config_after_sha256 = sha256_bytes(config.as_bytes());
+        write_deployment_manifest(&manifest_path, &manifest)?;
+        Ok(true)
+    }
+
     pub fn preview(&self, skills_dir: Option<&Path>) -> DeployPreview {
         let status = self.status();
         let selected_skills = selected_skill_ids(&self.codex_home, skills_dir).len();
@@ -722,4 +757,58 @@ fn atomic_write(path: &Path, content: &[u8]) -> std::io::Result<()> {
         let _ = fs::remove_file(&pending);
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_config_change_refreshes_hash_without_hiding_bridge_drift() {
+        let root = std::env::temp_dir().join(format!(
+            "julong-integrity-refresh-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let config_path = root.join("config.toml");
+        let bridge_path = root.join("bridge.md");
+        fs::write(&bridge_path, "managed bridge").unwrap();
+        fs::write(
+            &config_path,
+            "model = \"old\"\nmodel_instructions_file = \"./bridge.md\"\nbase_url = \"http://127.0.0.1:8080\"\n",
+        )
+        .unwrap();
+        let manifest = DeploymentManifest {
+            schema_version: 1,
+            deployment_id: "test".into(),
+            created_at: "test".into(),
+            config_before_sha256: "before".into(),
+            config_after_sha256: sha256_file(&config_path).unwrap(),
+            bridge_sha256: sha256_file(&bridge_path).unwrap(),
+            managed_skills: BTreeSet::new(),
+        };
+        write_deployment_manifest(&root.join(DEPLOYMENT_MANIFEST), &manifest).unwrap();
+        let manager = DeployManager {
+            codex_home: root.clone(),
+        };
+
+        fs::write(
+            &config_path,
+            "model = \"new\"\nmodel_instructions_file = \"./bridge.md\"\nbase_url = \"http://127.0.0.1:8080\"\n",
+        )
+        .unwrap();
+        assert!(!manager.status().integrity_ok);
+        assert!(manager.refresh_config_integrity().unwrap());
+        assert!(manager.status().integrity_ok);
+
+        fs::write(&bridge_path, "unexpected bridge change").unwrap();
+        fs::write(
+            &config_path,
+            "model = \"newer\"\nmodel_instructions_file = \"./bridge.md\"\nbase_url = \"http://127.0.0.1:8080\"\n",
+        )
+        .unwrap();
+        assert!(!manager.refresh_config_integrity().unwrap());
+        assert!(!manager.status().integrity_ok);
+        fs::remove_dir_all(root).unwrap();
+    }
 }
