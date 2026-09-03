@@ -22,3 +22,12 @@
 - 继续使用现有 Rust + Tauri + 原生 HTML/CSS/JS 技术栈。
 - 保持 macOS、Windows 构建脚本与 README 教程同步。
 - 新增功能时同时更新 README 的功能模块、构建说明和验证记录。
+
+## CLI 控制台入口（待实现）
+
+- 新增独立命令 `julong-codex start`，完成代理部署并监听 `127.0.0.1:8080`。
+- 新增独立命令 `julong-codex stop`，停止代理并恢复 Codex 原始配置。
+- 新增独立命令 `julong-codex status`，显示代理进程、8080 端口、部署状态和中转站地址。
+- CLI 与 Tauri 桌面端共享同一套部署、恢复、端口和状态逻辑，避免双重实现造成状态不一致。
+- 同步更新 macOS、Windows 的 CLI 安装与使用说明，并为 `start`、`stop`、`status` 增加可重复执行的验证记录。
+- CLI 功能完成后由用户自行运行 macOS/Windows 构建；代理执行任务期间不主动重新打包 App。
