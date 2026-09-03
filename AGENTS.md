@@ -40,3 +40,11 @@
 - 修改构建、安装、部署或恢复流程时，同步检查 `build-macos.sh`、`build-windows.sh`、Windows PowerShell/CMD 脚本及 README 文档。
 - 每次跨平台改动至少验证 Rust 格式、Rust 测试、前端语法和配置格式；具备对应工具链时分别执行 macOS 与 Windows 构建前检查。
 - 提交前检查平台专属条件编译、资源路径和打包资源清单，避免出现“一端可用、另一端启动失败”的回归。
+
+## Windows 完整安装程序
+
+- Windows 版本的正式交付物必须是完整的 `.exe` 安装程序，裸 `矩龙破甲.exe` 仅作为调试或辅助文件，不作为最终发布方式。
+- 安装程序必须携带并正确安装所有运行时资源，包括 Tauri 资源目录、`bridge.md`、`codex-skills/`、前端静态资源、图标及应用所需的配置模板。
+- Windows 构建优先生成 NSIS `.exe` 安装包；需要 MSI 时作为附加格式，EXE 安装程序仍是必需交付物。
+- 安装后必须从全新目录验证：开始菜单/桌面快捷方式、卸载入口、资源完整性、应用启动、代理启动及 `julong-codex status` 均可用。
+- 修改资源清单、安装路径或 Windows 构建脚本时，同步更新 `build-windows.ps1`、`build-windows.cmd`、`build-windows.sh` 和 README，并记录安装包验证结果。
