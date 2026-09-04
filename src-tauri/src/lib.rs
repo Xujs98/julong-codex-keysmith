@@ -25,7 +25,7 @@ use tokio::sync::RwLock;
 const BRIDGE_MD_FALLBACK: &str = include_str!("../../bridge.md");
 
 use crate::core::MitmCore;
-use crate::deploy::{find_relay_url, DeployManager};
+use crate::deploy::DeployManager;
 use crate::extensions::activity::{ActivityStatus, ActivityTracker};
 use crate::extensions::inject::SystemPromptInjector;
 use crate::extensions::memory::MemoryKernel;
@@ -377,11 +377,11 @@ async fn start_proxy(
     }
 
     // 4. 验证 relay URL — 无有效地址则阻断启动（防自环）
-    let relay_url_raw = match find_relay_url() {
-        Some(url) if !url.contains("127.0.0.1:8080") => url,
+    let relay_url_raw = match providers::configured_relay_url(manager.codex_home()) {
+        Some(url) => url,
         _ => {
             tracing::error!("start_proxy: no valid relay URL found");
-            return Err("未找到有效的中转站地址。请在配置页设置中转站 URL 后再启动代理。".into());
+            return Err("尚未配置供应商。请先在供应商页面添加中转站地址后再启动代理。".into());
         }
     };
 
@@ -395,7 +395,12 @@ async fn start_proxy(
             last_error: String::new(),
         }
     });
-    let relay_url = if let Some(provider) = provider_runtime.current().cloned() {
+    let relay_url = if let Some(provider) = provider_runtime
+        .providers
+        .iter()
+        .find(|provider| providers::valid_relay_url(&provider.normalized_url()))
+        .cloned()
+    {
         providers::activate(&provider, true)?
     } else {
         probe_api_prefix(&relay_url_raw).await
@@ -745,7 +750,9 @@ async fn get_activity_status(state: tauri::State<'_, AppState>) -> Result<Activi
 #[tauri::command]
 async fn get_codex_info() -> Result<serde_json::Value, String> {
     let home = DeployManager::find_codex_home();
-    let relay = find_relay_url();
+    let relay = home
+        .as_ref()
+        .and_then(|path| providers::configured_relay_url(path));
     Ok(serde_json::json!({
         "codex_home": home.map(|p| p.display().to_string()),
         "relay_url": relay,
@@ -810,6 +817,7 @@ fn export_mcp_tools() -> Result<String, String> {
 struct PreflightResult {
     codex_home_found: bool,
     codex_home_path: Option<String>,
+    provider_count: usize,
     relay_url: Option<String>,
     relay_url_valid: bool,
     port_available: bool,
@@ -830,14 +838,25 @@ async fn preflight_check(app: tauri::AppHandle) -> Result<PreflightResult, Strin
         errors.push("Codex 配置目录未找到，请确认 Codex CLI 已安装并运行过至少一次".into());
     }
 
-    // 2. Relay URL — 探测并规范化 API 路径前缀
-    let relay_url_raw = find_relay_url();
+    // 2. 供应商/Relay URL — 首装优先读取已保存的供应商，兼容旧版配置迁移
+    let provider_count = codex_home
+        .as_ref()
+        .and_then(|path| providers::load_or_migrate(path).ok())
+        .map(|list| list.len())
+        .unwrap_or(0);
+    let relay_url_raw = codex_home
+        .as_ref()
+        .and_then(|path| providers::configured_relay_url(path));
     let relay_url_valid = relay_url_raw
         .as_ref()
-        .map(|u| !u.is_empty() && !u.contains("127.0.0.1:8080"))
+        .map(|url| providers::valid_relay_url(url))
         .unwrap_or(false);
     if !relay_url_valid {
-        errors.push("未找到有效的中转站地址，请在配置页设置中转站 URL".into());
+        if provider_count == 0 {
+            errors.push("尚未配置供应商，请先在供应商页面添加中转站 URL".into());
+        } else {
+            errors.push("已保存的供应商没有有效中转站 URL，请检查供应商配置".into());
+        }
     }
     // 智能探测 /v1 前缀 — 返回规范化后的地址给前端展示
     let relay_url = if let Some(raw) = &relay_url_raw {
@@ -876,6 +895,7 @@ async fn preflight_check(app: tauri::AppHandle) -> Result<PreflightResult, Strin
     Ok(PreflightResult {
         codex_home_found,
         codex_home_path,
+        provider_count,
         relay_url,
         relay_url_valid,
         port_available,

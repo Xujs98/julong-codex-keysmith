@@ -655,10 +655,17 @@ impl DeployManager {
     }
 }
 
-/// 读取中转站地址（优先级: relay_url.txt > config.toml 备份 > config.toml 当前）
+/// 读取当前设备的中转站地址（优先级: relay_url.txt > config.toml 备份 > config.toml 当前）。
 pub fn find_relay_url() -> Option<String> {
     let home = DeployManager::find_codex_home()?;
+    find_relay_url_at(&home)
+}
 
+/// 从指定 Codex 目录读取中转站地址。
+///
+/// 供应商模块和启动检查都应使用同一个目录，避免测试环境或自定义 CODEX_HOME
+/// 下误读当前用户的另一份配置。
+pub fn find_relay_url_at(home: &Path) -> Option<String> {
     // 1. 优先读 relay_url.txt（用户显式设置的，或部署时自动保存的）
     let relay_file = home.join("relay_url.txt");
     if relay_file.exists() {

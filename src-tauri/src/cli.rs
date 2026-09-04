@@ -4,12 +4,13 @@
 //! 负责交互式 UI；CLI 负责可重复执行的 start/stop/status 和 MCP stdio 服务。
 
 use crate::core::MitmCore;
-use crate::deploy::{find_relay_url, DeployManager};
+use crate::deploy::DeployManager;
 use crate::extensions::inject::SystemPromptInjector;
 use crate::extensions::memory::MemoryKernel;
 use crate::extensions::sse_parser::UniversalSseParser;
 use crate::extensions::tamper::TamperEngine;
 use crate::mcp_tools::{load_catalog, run_mcp_stdio, ToolRunner, USER_CATALOG_FILE};
+use crate::providers;
 use crate::runtime;
 use futures::StreamExt;
 use http::StatusCode;
@@ -185,7 +186,8 @@ fn command_status() -> i32 {
             status.config_backed_up,
             status.transaction_pending,
             status.integrity_ok,
-            find_relay_url().unwrap_or_else(|| "未检测到".into()),
+            providers::configured_relay_url(manager.codex_home())
+                .unwrap_or_else(|| "未检测到".into()),
         )
     } else {
         (
@@ -390,10 +392,8 @@ fn command_daemon() -> i32 {
 
 async fn run_headless_proxy() -> Result<(), String> {
     let manager = DeployManager::new().ok_or("Codex 配置目录未找到")?;
-    let relay = find_relay_url().ok_or("未找到有效的中转站地址")?;
-    if relay.contains("127.0.0.1:8080") {
-        return Err("检测到代理自环地址".into());
-    }
+    let relay = providers::configured_relay_url(manager.codex_home())
+        .ok_or("尚未配置供应商，请先设置中转站 URL")?;
     let bridge = resource_file("bridge.md")
         .and_then(|path| std::fs::read_to_string(path).ok())
         .unwrap_or_else(|| BRIDGE_FALLBACK.to_string());

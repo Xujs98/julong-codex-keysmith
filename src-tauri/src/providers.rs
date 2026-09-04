@@ -1,6 +1,6 @@
 //! 供应商管理：持久化多供应商列表，并同步 Codex config.toml/auth.json。
 use crate::deploy::{
-    backup_auth_if_needed, backup_provider_config_if_needed, find_relay_url, DeployManager,
+    backup_auth_if_needed, backup_provider_config_if_needed, find_relay_url_at, DeployManager,
     AUTH_BACKUP_FILE, DEPLOYMENT_MANIFEST, PROVIDER_CONFIG_BACKUP_FILE,
 };
 use crate::transaction::FileTransaction;
@@ -51,6 +51,28 @@ impl Provider {
         }
         url
     }
+}
+
+/// 判断地址是否可以作为代理上游，排除空值和代理自身地址，防止形成自环。
+pub fn valid_relay_url(url: &str) -> bool {
+    let trimmed = url.trim();
+    !trimmed.is_empty() && !trimmed.contains("127.0.0.1:8080")
+}
+
+/// 解析启动时可用的上游地址。
+///
+/// 已保存的供应商优先于旧版 relay_url/config 迁移数据；这样首装后只要供应商
+/// 已保存，即使 relay_url.txt 尚未生成，也能正常进入启动流程。
+pub fn configured_relay_url(home: &Path) -> Option<String> {
+    if let Ok(list) = load_or_migrate(home) {
+        for provider in list {
+            let url = provider.normalized_url();
+            if valid_relay_url(&url) {
+                return Some(url);
+            }
+        }
+    }
+    find_relay_url_at(home).filter(|url| valid_relay_url(url))
 }
 
 #[derive(Clone, Serialize)]
@@ -117,7 +139,7 @@ pub fn load_or_migrate(home: &Path) -> Result<Vec<Provider>, String> {
         return serde_json::from_str(&text).map_err(|e| format!("parse providers failed: {e}"));
     }
     let mut list = Vec::new();
-    if let Some(url) = find_relay_url() {
+    if let Some(url) = find_relay_url_at(home) {
         let now = Utc::now().to_rfc3339();
         let p = Provider {
             id: Uuid::new_v4().to_string(),

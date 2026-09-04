@@ -394,10 +394,13 @@ el.stopConfirmSeconds?.addEventListener('change', (event) => {
 function showPreflight(result) {
     const modal = $('preflight-modal');
     const list = $('preflight-list');
+    const hint = $('preflight-hint');
+    const actions = $('preflight-actions');
+    const firstInstall = !result.relay_url_valid && Number(result.provider_count || 0) === 0;
 
     const checks = [
         { label: 'Codex 配置目录', pass: result.codex_home_found, detail: result.codex_home_path || '未找到' },
-        { label: '中转站地址', pass: result.relay_url_valid, detail: result.relay_url || '未设置' },
+        { label: '中转站地址', pass: result.relay_url_valid, detail: result.relay_url || (firstInstall ? '首装待配置' : '未设置') },
         { label: '端口 8080 可用', pass: result.port_available, detail: result.port_available ? '空闲' : '被占用' },
         { label: 'bridge.md 可读', pass: result.bridge_md_readable, detail: result.bridge_md_readable ? '就绪' : '不可读' },
         { label: 'Skills 目录', pass: result.skills_found, detail: result.skills_found ? '就绪' : '未找到' },
@@ -412,10 +415,27 @@ function showPreflight(result) {
     `).join('');
 
     modal.style.display = 'flex';
+
+    if (hint) {
+        hint.textContent = firstInstall
+            ? '这是首次安装，先添加一个供应商的 API 地址，保存后即可启动代理。'
+            : (result.provider_count > 0 ? '请检查供应商的 API 请求地址后再启动代理。' : '请先完成中转站配置后再启动代理。');
+        hint.classList.toggle('show', result.relay_url_valid === false);
+    }
+    if (actions) {
+        actions.innerHTML = `${firstInstall ? '<button class="btn btn-red solid" id="preflight-providers" type="button">去添加供应商</button>' : ''}<button class="btn" id="preflight-cancel" type="button">取消</button>`;
+    }
 }
 
-$('preflight-cancel')?.addEventListener('click', () => {
-    $('preflight-modal').style.display = 'none';
+$('preflight-actions')?.addEventListener('click', event => {
+    if (event.target.closest('#preflight-cancel')) {
+        $('preflight-modal').style.display = 'none';
+    }
+    if (event.target.closest('#preflight-providers')) {
+        $('preflight-modal').style.display = 'none';
+        switchPage('providers');
+        requestAnimationFrame(() => $('btn-add-provider')?.focus());
+    }
 });
 
 function setRunning(running) {
