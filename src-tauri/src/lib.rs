@@ -401,7 +401,18 @@ async fn start_proxy(
         .find(|provider| providers::valid_relay_url(&provider.normalized_url()))
         .cloned()
     {
-        providers::activate(&provider, true)?
+        match providers::activate(&provider, true) {
+            Ok(url) => url,
+            Err(error) => {
+                let rollback = manager.restore();
+                return Err(match rollback {
+                    Ok(_) => format!("供应商配置写入失败: {error}"),
+                    Err(rollback_error) => {
+                        format!("供应商配置写入失败: {error}; 启动部署回滚失败: {rollback_error}")
+                    }
+                });
+            }
+        }
     } else {
         probe_api_prefix(&relay_url_raw).await
     };
@@ -442,17 +453,26 @@ async fn start_proxy(
     let rule_count = tamper.rule_count();
 
     // 6. 构建 MitmCore
-    let core = Arc::new(
-        MitmCore::builder()
-            .target(&relay_url)
-            .request_interceptor(SystemPromptInjector::new(instructions))
-            .response_parser(UniversalSseParser)
-            .response_interceptor(tamper)
-            .response_interceptor(memory.clone())
-            .response_interceptor(monitor.clone())
-            .build()
-            .map_err(|e| e.to_string())?,
-    );
+    let core = match MitmCore::builder()
+        .target(&relay_url)
+        .request_interceptor(SystemPromptInjector::new(instructions))
+        .response_parser(UniversalSseParser)
+        .response_interceptor(tamper)
+        .response_interceptor(memory.clone())
+        .response_interceptor(monitor.clone())
+        .build()
+    {
+        Ok(core) => Arc::new(core),
+        Err(error) => {
+            let rollback = manager.restore();
+            return Err(match rollback {
+                Ok(_) => format!("创建代理核心失败: {error}"),
+                Err(rollback_error) => {
+                    format!("创建代理核心失败: {error}; 启动部署回滚失败: {rollback_error}")
+                }
+            });
+        }
+    };
 
     // 7. 同步绑定端口 — 失败则回滚部署，不修改 AppState
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
@@ -1019,7 +1039,11 @@ async fn use_provider(
     let ordered = providers::reorder(&ids)?;
     if let Some(provider) = ordered.first() {
         let running = state.core.read().await.is_some();
-        providers::activate(provider, running)?;
+        // 停止状态下只调整供应商优先级；config.toml/auth.json 的落盘统一
+        // 延迟到“启动代理”路径，避免打开应用或点“使用”就改写 Codex 文件。
+        if running {
+            providers::activate(provider, true)?;
+        }
         if let Some(runtime) = state.providers.read().await.as_ref() {
             let mut rt = runtime.write().await;
             rt.providers = ordered.clone();

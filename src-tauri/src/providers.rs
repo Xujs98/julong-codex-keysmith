@@ -300,14 +300,18 @@ fn render_provider_config(existing: &str, provider: &Provider, base_url: &str) -
     };
     let model_line = format!(r#"model = "{}""#, toml_string(model));
     let provider_line = r#"model_provider = "custom""#;
+    let reasoning_line = r#"model_reasoning_effort = "high""#;
+    let storage_line = "disable_response_storage = true";
     let instructions_line = r#"model_instructions_file = "./bridge.md""#;
     let mut out = existing.trim_end().to_string();
 
     if out.trim().is_empty() {
         return format!(
-            "{}\n{}\n{}\n\n[model_providers.custom]\nname = \"{}\"\nbase_url = \"{}\"\n",
+            "{}\n{}\n{}\n{}\n{}\n\n[model_providers.custom]\nname = \"{}\"\nbase_url = \"{}\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n",
             model_line,
             provider_line,
+            reasoning_line,
+            storage_line,
             instructions_line,
             toml_string(&provider.name),
             toml_string(base_url)
@@ -334,6 +338,30 @@ fn render_provider_config(existing: &str, provider: &Provider, base_url: &str) -
         );
     } else {
         missing_root_lines.push(provider_line.to_string());
+    }
+    if Regex::new(r#"(?m)^\s*model_reasoning_effort\s*=\s*"[^"]*""#)
+        .unwrap()
+        .is_match(&out)
+    {
+        out = replace_or_append(
+            &out,
+            r#"(?m)^\s*model_reasoning_effort\s*=\s*"[^"]*""#,
+            reasoning_line,
+        );
+    } else {
+        missing_root_lines.push(reasoning_line.to_string());
+    }
+    if Regex::new(r#"(?m)^\s*disable_response_storage\s*=\s*(?:true|false)\s*$"#)
+        .unwrap()
+        .is_match(&out)
+    {
+        out = replace_or_append(
+            &out,
+            r#"(?m)^\s*disable_response_storage\s*=\s*(?:true|false)\s*$"#,
+            storage_line,
+        );
+    } else {
+        missing_root_lines.push(storage_line.to_string());
     }
     if Regex::new(r#"(?m)^\s*model_instructions_file\s*=\s*"[^"]*""#)
         .unwrap()
@@ -370,10 +398,20 @@ fn render_provider_config(existing: &str, provider: &Provider, base_url: &str) -
             r#"(?m)^\s*base_url\s*=\s*"[^"]*""#,
             &format!(r#"base_url = "{}""#, toml_string(base_url)),
         );
+        let body = replace_or_append(
+            &body,
+            r#"(?m)^\s*wire_api\s*=\s*"[^"]*""#,
+            r#"wire_api = "responses""#,
+        );
+        let body = replace_or_append(
+            &body,
+            r#"(?m)^\s*requires_openai_auth\s*=\s*(?:true|false)\s*$"#,
+            "requires_openai_auth = true",
+        );
         out = format!("{}{}{}", head, body, tail);
     } else {
         out.push_str(&format!(
-            "\n\n{}\nname = \"{}\"\nbase_url = \"{}\"\n",
+            "\n\n{}\nname = \"{}\"\nbase_url = \"{}\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n",
             section,
             toml_string(&provider.name),
             toml_string(base_url)
@@ -523,6 +561,8 @@ mod tests {
         let parsed: toml::Value = toml::from_str(&value).unwrap();
         assert!(value.contains("model = \"gpt-test\""));
         assert!(value.contains("model_provider = \"custom\""));
+        assert!(value.contains("model_reasoning_effort = \"high\""));
+        assert!(value.contains("disable_response_storage = true"));
         assert!(value.contains("model_instructions_file = \"./bridge.md\""));
         assert!(value.contains("[model_providers.custom]"));
         assert!(value.contains("name = \"主力供应商\""));
@@ -539,8 +579,24 @@ mod tests {
         );
         let _: toml::Value = toml::from_str(&value).unwrap();
         assert!(value.starts_with("model = \"gpt-test\"\nmodel_provider = \"custom\""));
+        assert!(value.contains("model_reasoning_effort = \"high\""));
+        assert!(value.contains("disable_response_storage = true"));
         assert!(value.contains("sandbox_mode = \"workspace-write\""));
         assert!(value.contains("base_url = \"https://relay.example/v1\""));
+    }
+
+    #[test]
+    fn incomplete_existing_config_gets_required_root_keys() {
+        let value = render_provider_config(
+            "model = \"old-model\"\nmodel_provider = \"old\"\n\n[model_providers.custom]\nname = \"old\"\nbase_url = \"https://old.example/v1\"\n",
+            &provider(),
+            "https://relay.example/v1",
+        );
+        let parsed: toml::Value = toml::from_str(&value).unwrap();
+        assert_eq!(parsed["model_reasoning_effort"].as_str(), Some("high"));
+        assert_eq!(parsed["disable_response_storage"].as_bool(), Some(true));
+        assert_eq!(parsed["model"].as_str(), Some("gpt-test"));
+        assert_eq!(parsed["model_provider"].as_str(), Some("custom"));
     }
 
     #[test]

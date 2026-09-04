@@ -98,6 +98,22 @@ fn command_start() -> i32 {
         return 1;
     }
 
+    // 与桌面端保持一致：供应商凭据与自定义 model provider 只在启动时
+    // 投影到 Codex 的 config.toml/auth.json。
+    if let Ok(runtime) = providers::ProviderRuntime::load() {
+        if let Some(provider) = runtime
+            .providers
+            .iter()
+            .find(|provider| providers::valid_relay_url(&provider.normalized_url()))
+        {
+            if let Err(error) = providers::activate(provider, true) {
+                eprintln!("[FAIL] 供应商配置写入失败: {error}");
+                let _ = manager.restore();
+                return 1;
+            }
+        }
+    }
+
     let executable = match std::env::current_exe() {
         Ok(path) => path,
         Err(error) => {
