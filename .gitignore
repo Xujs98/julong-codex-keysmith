@@ -5,6 +5,7 @@ target/
 src-tauri/target/
 src-tauri/gen/
 src-tauri/resources/
+src-tauri/binaries/
 
 # Node.js
 node_modules/

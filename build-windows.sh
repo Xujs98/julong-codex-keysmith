@@ -64,16 +64,22 @@ if [[ ! -f "$SOURCE_EXE" ]]; then
   SOURCE_EXE="$RELEASE_DIR/矩龙破甲.exe"
 fi
 [[ -f "$SOURCE_EXE" ]] || { echo "Windows executable not found under $RELEASE_DIR"; exit 1; }
+CLI_EXE="$RELEASE_DIR/julong-codex.exe"
+[[ -f "$CLI_EXE" ]] || { echo "Windows CLI executable not found: $CLI_EXE"; exit 1; }
 
 OUT_DIR="artifacts/windows-local"
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 cp "$SOURCE_EXE" "$OUT_DIR/矩龙破甲.exe"
+cp "$CLI_EXE" "$OUT_DIR/julong-codex.exe"
 
 # 直运行 EXE 时将 Skills 放在旁边，保证运行时可扫描。
 cp bridge.md "$OUT_DIR/bridge.md"
 cp -R codex-skills "$OUT_DIR/codex-skills"
+cp -R mcp-tools "$OUT_DIR/mcp-tools"
 
 echo "[OK] $OUT_DIR/矩龙破甲.exe"
+echo "[OK] $OUT_DIR/julong-codex.exe"
 echo "[OK] $OUT_DIR/bridge.md"
 echo "[OK] $OUT_DIR/codex-skills/"
+echo "[OK] $OUT_DIR/mcp-tools/"

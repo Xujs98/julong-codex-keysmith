@@ -59,7 +59,8 @@
     },
     "resources": {
       "resources/bridge.md": "bridge.md",
-      "resources/codex-skills/": "codex-skills/"
+      "resources/codex-skills/": "codex-skills/",
+      "resources/mcp-tools/": "mcp-tools/"
     }
   }
 }

@@ -3,14 +3,15 @@
   "version": "0.2.0",
   "scripts": {
     "tauri": "tauri",
+    "prepare-sidecar": "node scripts/prepare-sidecar.mjs",
     "dev": "tauri dev",
-    "build": "tauri build",
-    "build:win": "tauri build --no-bundle",
-    "build:win:bundle": "tauri build --bundles nsis,msi",
+    "build": "node scripts/prepare-sidecar.mjs && tauri build --config src-tauri/tauri.sidecar.conf.json",
+    "build:win": "node scripts/prepare-sidecar.mjs x86_64-pc-windows-msvc && tauri build --config src-tauri/tauri.sidecar.conf.json --target x86_64-pc-windows-msvc --no-bundle",
+    "build:win:bundle": "node scripts/prepare-sidecar.mjs x86_64-pc-windows-msvc && tauri build --config src-tauri/tauri.sidecar.conf.json --target x86_64-pc-windows-msvc --bundles nsis,msi",
     "copy-resources": "node scripts/copy-resources.mjs",
-    "build:mac:intel": "tauri build --target x86_64-apple-darwin --bundles app,dmg",
-    "build:mac:apple": "tauri build --target aarch64-apple-darwin --bundles app,dmg",
-    "build:mac:universal": "tauri build --target universal-apple-darwin --bundles app,dmg"
+    "build:mac:intel": "node scripts/prepare-sidecar.mjs x86_64-apple-darwin && tauri build --config src-tauri/tauri.sidecar.conf.json --target x86_64-apple-darwin --bundles app,dmg",
+    "build:mac:apple": "node scripts/prepare-sidecar.mjs aarch64-apple-darwin && tauri build --config src-tauri/tauri.sidecar.conf.json --target aarch64-apple-darwin --bundles app,dmg",
+    "build:mac:universal": "node scripts/prepare-sidecar.mjs universal-apple-darwin && tauri build --config src-tauri/tauri.sidecar.conf.json --target universal-apple-darwin --bundles app,dmg"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

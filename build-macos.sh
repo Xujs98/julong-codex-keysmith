@@ -18,6 +18,11 @@ for command_name in node npm cargo rustup xcrun; do
   fi
 done
 
+if [[ "${MODE}" == "universal" ]] && ! command -v lipo >/dev/null 2>&1; then
+  echo "Missing required command: lipo"
+  exit 1
+fi
+
 case "${MODE}" in
   intel)
     TARGETS=("x86_64-apple-darwin")

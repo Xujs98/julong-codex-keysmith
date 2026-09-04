@@ -21,7 +21,7 @@ Codex CLI ──HTTP :8080──▶ MITM Core (管道编排)
                             │     SSE / JSON / Responses API 通用解析
                             │
                             ├─ M3 TamperEngine (ResponseInterceptor, 自门控)
-                            │     22 条正则检测拒绝响应 → Rei Protocol 替换
+                            │     35 条正则检测拒绝响应 → Rei Protocol 替换
                             │
                             ├─ M5 MemoryKernel (ResponseInterceptor, 自门控)
                             │     成功交互持久化到 memory.json
@@ -31,6 +31,9 @@ Codex CLI ──HTTP :8080──▶ MITM Core (管道编排)
                             │
                             ▼
                         中转站 (上游 API)
+
+julong-codex CLI ─┬─ start / stop / status ─▶ 复用同一套 DeployManager + MITM Core
+                  └─ mcp serve / doctor / call ─▶ Local / WSL / Docker / SSH
 ```
 
 **Core 原则**：Core 对扩展内容一无所知，只提供管道和挂载点。所有破甲逻辑由扩展承载。
@@ -41,11 +44,13 @@ Codex CLI ──HTTP :8080──▶ MITM Core (管道编排)
 |---|---|---|
 | M1 Inject | RequestInterceptor | 递归遍历 JSON，替换所有 system role 内容为 bridge.md |
 | M4 SSE Parser | ResponseParser | 处理 SSE 流、OpenAI JSON、Responses API，分离思维链与回复 |
-| M3 Tamper | ResponseInterceptor | 22 条多语言正则检测拒绝响应，触发 Rei Protocol 替换 |
+| M3 Tamper | ResponseInterceptor | 35 条多语言正则检测拒绝响应，触发 Rei Protocol 替换 |
 | M5 Memory | ResponseInterceptor | 记录成功交互到 memory.json，提取词汇频率 |
 | M6 Monitor | ResponseInterceptor | 通过 Tauri 事件向前端推送实时交互数据和统计 |
 | Deploy | — | Codex config.toml 备份/修改/恢复，部署 bridge.md + skills/ |
 | Providers | — | 多供应商持久化、拖拽排序、测速/模型拉取、auth.json/config.toml 同步与异常自动切换 |
+| CLI | — | `julong-codex start/stop/status`，与桌面端共享部署、恢复、端口和健康检查逻辑 |
+| MCP Tools | — | 31 个配置驱动工具，支持 Local / WSL / Docker / SSH，带超时、输出上限和可用性检查 |
 
 仪表盘的“实时活动”面板会完整展示破解、逆向、渗透和已篡改四类执行状态；总交互数显示在面板标题中，各分类累计数量显示在对应机器人卡片右上角，并随事件实时刷新。命中机器人后，其黑色终端屏幕显示与当前请求关联的模拟命令、实时阶段、进度百分比和运行时长；状态通过独立的最新值事件通道异步推送，代理仅通过 Tauri 事件心跳和请求生命周期同步状态，不向 Codex 的 SSE 响应注入 keepalive、不提前截断上游流，也不会把上游断流时的半截响应交给 Codex。任务结束后自动恢复分类名称和空闲喝咖啡状态。命令仅作为界面事件文本展示，不调用本机 shell。
 
@@ -73,13 +78,15 @@ Codex CLI ──HTTP :8080──▶ MITM Core (管道编排)
 ```bash
 cd /path/to/Super-Instruct-Codex-5.6
 npm install
-npx tauri dev
+npm run dev
 ```
+
+`npm run dev` 保持快速桌面调试；Release 构建脚本会额外构建并打包 `julong-codex` sidecar。
 
 ### Release 构建
 
 ```bash
-npx tauri build
+npm run build
 ```
 
 产物输出到 `src-tauri/target/release/bundle/`。
@@ -157,7 +164,7 @@ src-tauri\\target\\release\\bundle\\nsis\\
 src-tauri\\target\\release\\bundle\\msi\\
 ```
 
-Windows 正式交付使用带有矩龙破甲品牌视觉的 NSIS `.exe` 安装程序，安装向导包含专属顶部横幅、侧栏、应用图标和开始菜单目录，并将 `bridge.md`、`codex-skills/` 及 Tauri 运行时资源一并打包。直接执行 `build-windows.ps1` 时默认生成 NSIS 安装包；裸 EXE 仅用于调试验证。
+Windows 正式交付使用带有矩龙破甲品牌视觉的 NSIS `.exe` 安装程序，安装向导包含专属顶部横幅、侧栏、应用图标和开始菜单目录，并将 `bridge.md`、`codex-skills/`、`mcp-tools/` 和 `julong-codex.exe` sidecar 及 Tauri 运行时资源一并打包。直接执行 `build-windows.ps1` 时默认生成 NSIS 安装包；裸 EXE 仅用于调试验证。
 
 当前配置中的 `macOSPrivateApi` 仅在 macOS 编译目标生效，不影响 Windows 构建。
 
@@ -177,7 +184,59 @@ Windows 正式交付使用带有矩龙破甲品牌视觉的 NSIS `.exe` 安装�
 cargo install cargo-xwin
 ```
 
-产物位于 `artifacts/windows-local/`，其中包含 `矩龙破甲.exe`、`bridge.md` 和 `codex-skills/`。
+产物位于 `artifacts/windows-local/`，其中包含 `矩龙破甲.exe`、`julong-codex.exe`、`bridge.md`、`codex-skills/` 和 `mcp-tools/`。macOS 上的交叉编译用于可执行文件检查；完整 NSIS 安装包仍在 Windows 目标机执行 `build-windows.cmd`。
+
+### CLI 控制台
+
+```bash
+# 开发构建（当前 macOS）
+cargo build --manifest-path src-tauri/Cargo.toml --bin julong-codex
+
+src-tauri/target/debug/julong-codex start
+src-tauri/target/debug/julong-codex status
+src-tauri/target/debug/julong-codex stop
+```
+
+macOS Release 会将 CLI 放在 `矩龙破甲.app/Contents/MacOS/julong-codex`。需要全局命令时，可在安装 App 后创建软链接：
+
+```bash
+sudo ln -sf "/Applications/矩龙破甲.app/Contents/MacOS/julong-codex" /usr/local/bin/julong-codex
+julong-codex status
+```
+
+Windows 目标机的 NSIS 安装包会携带 `julong-codex.exe`。可在安装目录直接运行，或将安装目录加入用户 `PATH` 后运行 `julong-codex.exe status`。`start` 可重复执行且不会重复部署；`stop` 可重复恢复；`status` 同时显示代理进程、8080 端口、部署完整性和中转站。
+
+当 8080 端口空闲时，可使用隔离的临时 `CODEX_HOME` 重复验证 `start` / `stop` / `status`，脚本会检查两次启动、两次停止和最终配置回滚；如果端口已被现有代理占用，脚本以 77 退出且不触碰现有进程。
+
+```bash
+./scripts/verify-cli.sh src-tauri/target/debug/julong-codex
+```
+
+### MCP 工具集
+
+内置目录包含 31 个网络、Web、漏洞研究、密码、逆向、取证、加密和 Windows 工具定义。工具运行时以结构化 argv 传参，不复制参考项目的 shell 命令字符串拼接方式。`python_exec`、`shell_exec`、`powershell_exec` 三个通用命令工具默认关闭，因此 MCP `tools/list` 默认暴露 28 个工具。
+
+```bash
+julong-codex mcp list
+julong-codex mcp export
+julong-codex mcp doctor --backend local
+julong-codex mcp doctor --backend wsl --wsl-distro kali-linux
+julong-codex mcp doctor --backend docker --docker-container kali-tools
+julong-codex mcp doctor --backend ssh --ssh-host user@host
+julong-codex mcp serve --backend auto
+```
+
+工具程序需已存在于选中的本机、WSL 发行版、Docker 容器或 SSH 主机。桌面端“MCP 工具”页可切换后端、查看分类、检查可用性，并将内置目录导出到 `~/.codex/julong-mcp-tools.json` 作为用户级配置；已存在的文件不会被覆盖。
+
+在 `~/.codex/config.toml` 注册 MCP stdio 服务：
+
+```toml
+[mcp_servers.julong_tools]
+command = "julong-codex"
+args = ["mcp", "serve", "--backend", "auto"]
+startup_timeout_sec = 30
+tool_timeout_sec = 600
+```
 
 ### 供应商功能验证
 
@@ -187,6 +246,8 @@ node --check frontend/app.js
 cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 cargo test --manifest-path src-tauri/Cargo.toml
 python3 -m json.tool src-tauri/tauri.conf.json >/dev/null
+python3 -m json.tool src-tauri/tauri.sidecar.conf.json >/dev/null
+python3 -m json.tool mcp-tools/tools.json >/dev/null
 ```
 
 ### 使用方式
@@ -206,6 +267,8 @@ Super-Instruct-Codex-5.6/
 ├── bridge.md                      # 破甲指令集（注入到 system role）
 ├── codex-skills/                  # 29 个 Codex 技能模块（开关后即时同步到 ~/.codex/skills/）
 │   └── novel-agent/               # 小说创作 Skill：工具集 + 本地状态模块
+├── mcp-tools/
+│   └── tools.json                # 31 个 MCP 工具的结构化目录
 ├── frontend/
 │   ├── index.html                 # V3 浅色主题，无框窗口 + 自定义标题栏
 │   ├── styles.css                 # 类别色彩系统，960x620 紧凑布局
@@ -213,13 +276,18 @@ Super-Instruct-Codex-5.6/
 ├── src-tauri/
 │   ├── Cargo.toml
 │   ├── tauri.conf.json            # 960x620 无框窗口，系统托盘
+│   ├── tauri.sidecar.conf.json    # Release 打包时合并 CLI sidecar
 │   ├── build.rs
 │   ├── capabilities/default.json
 │   ├── icons/                     # 全平台图标（红色菱形）
 │   ├── installer/                 # Windows NSIS 安装向导品牌视觉资源
 │   └── src/
 │       ├── main.rs                # 入口：调用 super_instruct::run()
+│       ├── bin/julong-codex.rs    # 独立 CLI 入口
 │       ├── lib.rs                 # Tauri app + axum proxy + Tauri commands
+│       ├── cli.rs                 # start/stop/status + MCP 命令路由
+│       ├── runtime.rs             # 桌面端/CLI 共享端口、PID 和健康检查
+│       ├── mcp_tools.rs           # 工具目录、多后端执行器与 MCP stdio
 │       ├── log.rs                 # 控制台 + 文件双输出日志
 │       ├── deploy.rs              # Codex config.toml 备份/修改/恢复
 │       ├── core/
@@ -230,7 +298,7 @@ Super-Instruct-Codex-5.6/
 │       └── extensions/
 │           ├── inject.rs          # M1: SystemPromptInjector
 │           ├── sse_parser.rs       # M4: UniversalSseParser
-│           ├── tamper.rs          # M3: TamperEngine (22 条规则)
+│           ├── tamper.rs          # M3: TamperEngine (35 条规则)
 │           ├── memory.rs         # M5: MemoryKernel
 │           ├── monitor.rs         # M6: MonitorPanel (Tauri 事件推送)
 │           └── activity.rs        # Codex 请求分类与实时活动机器人状态
@@ -340,7 +408,7 @@ MIT — 见 [LICENSE](LICENSE)
 
 ## 致谢
 
-- 相关源码提供者：**lingbol088-spec**, **MDX-Tom**
+- 参考项目与相关源码提供者：[lingbol088-spec/5.6-JAILBREAK-NERV-codex-instruct-5.6](https://github.com/lingbol088-spec/5.6-JAILBREAK-NERV-codex-instruct-5.6)，**MDX-Tom**
 - 仓库贡献者：**FuDie0915**
 - 测试指令替换：**InsTest**
 

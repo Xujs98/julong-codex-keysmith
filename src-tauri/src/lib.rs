@@ -1,11 +1,14 @@
 // Super-Instruct — Tauri 桌面应用入口
 // MITM Core 作为 Tauri 后端进程运行，前端通过事件系统接收实时数据
 
+pub mod cli;
 pub mod core;
 pub mod deploy;
 pub mod extensions;
 pub mod log;
+pub mod mcp_tools;
 pub mod providers;
+pub mod runtime;
 pub mod skills;
 pub mod transaction;
 
@@ -117,7 +120,7 @@ pub fn run() {
                     Err(error) => tracing::error!("startup: transaction recovery failed: {error}"),
                 }
                 let status = manager.status();
-                if status.config_backed_up {
+                if status.config_backed_up && !runtime::proxy_is_healthy() {
                     tracing::warn!(
                         "startup: residual deployment detected (bridge_active={}, backup exists), auto-restoring",
                         status.bridge_active
@@ -139,6 +142,11 @@ pub fn run() {
                         }
                         Err(e) => tracing::error!("startup: auto-restore failed: {}", e),
                     }
+                } else if status.config_backed_up {
+                    tracing::info!(
+                        "startup: managed CLI proxy is active on {}, keeping deployment",
+                        runtime::PROXY_ADDRESS
+                    );
                 } else {
                     tracing::debug!("startup: no residual deployment detected");
                 }
@@ -181,15 +189,21 @@ pub fn run() {
                             }
                         }
                         "quit" => {
-                            // 退出前恢复 Codex 配置，避免 config.toml 残留代理指向
+                            // 退出前只恢复桌面端自己的部署。CLI 托管代理存活时保留配置。
                             if let Some(manager) = DeployManager::new() {
                                 let status = manager.status();
-                                if status.config_backed_up || status.bridge_active {
+                                let cli_managed = runtime::proxy_is_healthy()
+                                    && runtime::managed_proxy_pid(manager.codex_home()).is_some();
+                                if (status.config_backed_up || status.bridge_active) && !cli_managed {
                                     tracing::info!("quit: restoring codex config before exit");
                                     match manager.restore() {
                                         Ok(msg) => tracing::info!("quit: restore succeeded: {}", msg),
                                         Err(e) => tracing::error!("quit: restore failed: {}", e),
                                     }
+                                } else if cli_managed {
+                                    tracing::info!(
+                                        "quit: CLI managed proxy is active; keeping deployment"
+                                    );
                                 }
                             }
                             // 先销毁窗口再退出，避免 Chromium "Failed to unregister class" Error 1412
@@ -239,6 +253,9 @@ pub fn run() {
             test_provider,
             fetch_provider_models,
             get_provider_runtime_status,
+            get_mcp_tools,
+            check_mcp_tools,
+            export_mcp_tools,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -528,6 +545,17 @@ async fn stop_proxy(
     }
     *state.providers.write().await = None;
 
+    // 桌面端也可停止 CLI 启动的托管代理；仅处理带 PID 文件的本项目进程。
+    if let Some(manager) = DeployManager::new() {
+        match runtime::terminate_managed_proxy(manager.codex_home()) {
+            Ok(true) => {
+                let _ = runtime::wait_for_port(false, std::time::Duration::from_secs(5));
+            }
+            Ok(false) => {}
+            Err(error) => tracing::warn!("stop_proxy: managed process cleanup failed: {error}"),
+        }
+    }
+
     // 自动恢复 Codex 配置：停止代理后 base_url 指向死端口会导致 Codex CLI 不可用
     let restore_msg = if let Some(manager) = DeployManager::new() {
         match manager.restore() {
@@ -636,7 +664,7 @@ async fn get_history(state: tauri::State<'_, AppState>) -> Result<Vec<Interactio
 #[tauri::command]
 async fn get_proxy_status(state: tauri::State<'_, AppState>) -> Result<String, String> {
     let core = state.core.read().await;
-    if core.is_some() {
+    if core.is_some() || runtime::proxy_is_healthy() {
         Ok("running".into())
     } else {
         Ok("stopped".into())
@@ -660,6 +688,58 @@ async fn get_codex_info() -> Result<serde_json::Value, String> {
         "codex_home": home.map(|p| p.display().to_string()),
         "relay_url": relay,
     }))
+}
+
+fn mcp_catalog_path(app: &tauri::AppHandle) -> Result<(std::path::PathBuf, bool), String> {
+    if let Some(home) = DeployManager::find_codex_home() {
+        let user = home.join(crate::mcp_tools::USER_CATALOG_FILE);
+        if user.exists() {
+            return Ok((user, true));
+        }
+    }
+    resolve_resource_file(app, "mcp-tools/tools.json").map(|path| (path, false))
+}
+
+#[tauri::command]
+fn get_mcp_tools(
+    app: tauri::AppHandle,
+    backend: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let (path, customized) = mcp_catalog_path(&app)?;
+    let catalog = crate::mcp_tools::load_catalog(Some(&path))?;
+    let runner = crate::mcp_tools::ToolRunner::new(catalog, backend.as_deref())?;
+    let requested = backend.unwrap_or_else(|| runner.catalog.defaults.backend.clone());
+    let backend_status = runner.backend_status(&requested);
+    Ok(serde_json::json!({
+        "source": path.display().to_string(),
+        "customized": customized,
+        "tool_count": runner.catalog.tools.len(),
+        "categories": runner.catalog.categories(),
+        "defaults": runner.catalog.defaults,
+        "backend": backend_status,
+        "tools": runner.catalog.tools,
+    }))
+}
+
+#[tauri::command]
+async fn check_mcp_tools(
+    app: tauri::AppHandle,
+    backend: Option<String>,
+) -> Result<Vec<crate::mcp_tools::ToolAvailability>, String> {
+    let (path, _) = mcp_catalog_path(&app)?;
+    let catalog = crate::mcp_tools::load_catalog(Some(&path))?;
+    let runner = crate::mcp_tools::ToolRunner::new(catalog, backend.as_deref())?;
+    tokio::task::spawn_blocking(move || runner.availability())
+        .await
+        .map_err(|e| format!("MCP 工具检查任务失败: {e}"))
+}
+
+#[tauri::command]
+fn export_mcp_tools() -> Result<String, String> {
+    let home = DeployManager::find_codex_home().ok_or("Codex home not found")?;
+    let path = home.join(crate::mcp_tools::USER_CATALOG_FILE);
+    crate::mcp_tools::export_builtin_catalog(&path)?;
+    Ok(path.display().to_string())
 }
 
 // ── Pre-flight 检查 ─────────────────────────────────────

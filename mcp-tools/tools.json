@@ -1,0 +1,388 @@
+{
+  "schema_version": 1,
+  "defaults": {
+    "backend": "auto",
+    "wsl_distro": "kali-linux",
+    "docker_container": "kali-tools",
+    "ssh_host": "",
+    "timeout_seconds": 600,
+    "output_limit_bytes": 100000,
+    "allow_command_tools": false
+  },
+  "tools": [
+    {
+      "name": "nmap_scan",
+      "description": "端口扫描与服务识别",
+      "category": "network",
+      "programs": ["nmap"],
+      "arguments": ["{flags}", "-p", "{ports}", "{target}"],
+      "expand_parameters": ["flags"],
+      "parameters": [
+        {"name": "target", "description": "目标主机或网段"},
+        {"name": "ports", "description": "端口范围"},
+        {"name": "flags", "description": "额外 nmap 参数", "required": false}
+      ]
+    },
+    {
+      "name": "masscan_scan",
+      "description": "高速端口扫描",
+      "category": "network",
+      "programs": ["masscan"],
+      "arguments": ["{target}", "-p{ports}", "--rate", "1000"],
+      "parameters": [
+        {"name": "target", "description": "目标主机或网段"},
+        {"name": "ports", "description": "端口范围"}
+      ]
+    },
+    {
+      "name": "tcpdump_capture",
+      "description": "抓取指定接口的网络流量",
+      "category": "network",
+      "programs": ["tcpdump"],
+      "arguments": ["-i", "{interface}", "{filter}", "-c", "{count}", "-n"],
+      "parameters": [
+        {"name": "interface", "description": "网络接口"},
+        {"name": "filter", "description": "BPF 过滤表达式"},
+        {"name": "count", "description": "抓包数量"}
+      ]
+    },
+    {
+      "name": "netcat_connect",
+      "description": "TCP/UDP 连接与监听",
+      "category": "network",
+      "programs": ["nc", "netcat"],
+      "arguments": ["{flags}", "{host}", "{port}"],
+      "expand_parameters": ["flags"],
+      "parameters": [
+        {"name": "host", "description": "目标主机"},
+        {"name": "port", "description": "目标端口"},
+        {"name": "flags", "description": "额外参数", "required": false}
+      ]
+    },
+    {
+      "name": "sqlmap_scan",
+      "description": "SQL 注入检测",
+      "category": "web",
+      "programs": ["sqlmap"],
+      "arguments": ["-u", "{url}", "{flags}", "--batch", "--random-agent"],
+      "expand_parameters": ["flags"],
+      "parameters": [
+        {"name": "url", "description": "测试 URL"},
+        {"name": "flags", "description": "额外 sqlmap 参数", "required": false}
+      ]
+    },
+    {
+      "name": "dirb_scan",
+      "description": "Web 目录枚举",
+      "category": "web",
+      "programs": ["dirb"],
+      "arguments": ["{url}", "{wordlist}", "-r"],
+      "parameters": [
+        {"name": "url", "description": "站点 URL"},
+        {"name": "wordlist", "description": "字典路径"}
+      ]
+    },
+    {
+      "name": "nikto_scan",
+      "description": "Web 服务配置与漏洞扫描",
+      "category": "web",
+      "programs": ["nikto"],
+      "arguments": ["-h", "{host}", "-p", "{port}"],
+      "parameters": [
+        {"name": "host", "description": "目标主机"},
+        {"name": "port", "description": "目标端口"}
+      ]
+    },
+    {
+      "name": "wpscan",
+      "description": "WordPress 安全扫描",
+      "category": "web",
+      "programs": ["wpscan"],
+      "arguments": ["--url", "{url}", "{flags}", "--no-banner"],
+      "expand_parameters": ["flags"],
+      "parameters": [
+        {"name": "url", "description": "WordPress URL"},
+        {"name": "flags", "description": "额外参数", "required": false}
+      ]
+    },
+    {
+      "name": "ffuf_fuzz",
+      "description": "目录、参数和虚拟主机模糊测试",
+      "category": "web",
+      "programs": ["ffuf"],
+      "arguments": ["-u", "{url}", "-w", "{wordlist}", "{flags}"],
+      "expand_parameters": ["flags"],
+      "parameters": [
+        {"name": "url", "description": "包含 FUZZ 的 URL"},
+        {"name": "wordlist", "description": "字典路径"},
+        {"name": "flags", "description": "额外参数", "required": false}
+      ]
+    },
+    {
+      "name": "curl_fetch",
+      "description": "请求 URL 并显示响应头",
+      "category": "web",
+      "programs": ["curl"],
+      "arguments": ["-sL", "-D", "-", "{url}", "{flags}"],
+      "expand_parameters": ["flags"],
+      "parameters": [
+        {"name": "url", "description": "请求 URL"},
+        {"name": "flags", "description": "额外 curl 参数", "required": false}
+      ]
+    },
+    {
+      "name": "gobuster_scan",
+      "description": "目录、DNS 和虚拟主机枚举",
+      "category": "web",
+      "programs": ["gobuster"],
+      "arguments": ["dir", "-u", "{url}", "-w", "{wordlist}", "{flags}"],
+      "expand_parameters": ["flags"],
+      "parameters": [
+        {"name": "url", "description": "站点 URL"},
+        {"name": "wordlist", "description": "字典路径"},
+        {"name": "flags", "description": "额外参数", "required": false}
+      ]
+    },
+    {
+      "name": "msf_search",
+      "description": "检索 Metasploit 模块",
+      "category": "exploit",
+      "programs": ["msfconsole"],
+      "arguments": ["-q", "-x", "search {keyword}; exit"],
+      "parameters": [
+        {"name": "keyword", "description": "模块关键词"}
+      ]
+    },
+    {
+      "name": "msf_exploit",
+      "description": "运行指定 Metasploit 模块",
+      "category": "exploit",
+      "programs": ["msfconsole"],
+      "arguments": ["-q", "-x", "use {exploit}; set RHOSTS {target}; set PAYLOAD {payload}; set LHOST {lhost}; set LPORT {lport}; exploit -j; exit"],
+      "parameters": [
+        {"name": "exploit", "description": "模块名称"},
+        {"name": "target", "description": "RHOSTS"},
+        {"name": "payload", "description": "PAYLOAD"},
+        {"name": "lhost", "description": "LHOST"},
+        {"name": "lport", "description": "LPORT"}
+      ]
+    },
+    {
+      "name": "searchsploit",
+      "description": "检索本地 Exploit-DB 索引",
+      "category": "exploit",
+      "programs": ["searchsploit"],
+      "arguments": ["{keyword}"],
+      "parameters": [
+        {"name": "keyword", "description": "检索关键词"}
+      ]
+    },
+    {
+      "name": "hydra_brute",
+      "description": "账号口令验证测试",
+      "category": "password",
+      "programs": ["hydra"],
+      "arguments": ["-L", "{userlist}", "-P", "{passlist}", "{target}", "{service}", "{flags}"],
+      "expand_parameters": ["flags"],
+      "parameters": [
+        {"name": "service", "description": "服务类型"},
+        {"name": "target", "description": "目标主机"},
+        {"name": "userlist", "description": "用户名列表"},
+        {"name": "passlist", "description": "口令列表"},
+        {"name": "flags", "description": "额外参数", "required": false}
+      ]
+    },
+    {
+      "name": "john_crack",
+      "description": "使用 John the Ripper 分析哈希",
+      "category": "password",
+      "programs": ["john"],
+      "arguments": ["{hashfile}", "{flags}"],
+      "expand_parameters": ["flags"],
+      "parameters": [
+        {"name": "hashfile", "description": "哈希文件"},
+        {"name": "flags", "description": "额外参数", "required": false}
+      ]
+    },
+    {
+      "name": "hashcat_crack",
+      "description": "使用 Hashcat 分析哈希",
+      "category": "password",
+      "programs": ["hashcat"],
+      "arguments": ["-m", "0", "{hashfile}", "{mask}", "{flags}"],
+      "expand_parameters": ["flags"],
+      "parameters": [
+        {"name": "hashfile", "description": "哈希文件"},
+        {"name": "mask", "description": "字典或掩码"},
+        {"name": "flags", "description": "额外参数", "required": false}
+      ]
+    },
+    {
+      "name": "strings_extract",
+      "description": "提取二进制可打印字符串",
+      "category": "reverse",
+      "programs": ["strings"],
+      "arguments": ["-n", "{min_len}", "{file}"],
+      "parameters": [
+        {"name": "file", "description": "文件路径"},
+        {"name": "min_len", "description": "最短字符串长度"}
+      ]
+    },
+    {
+      "name": "objdump_disasm",
+      "description": "反汇编目标文件",
+      "category": "reverse",
+      "programs": ["objdump", "llvm-objdump"],
+      "arguments": ["-d", "{flags}", "{file}"],
+      "expand_parameters": ["flags"],
+      "parameters": [
+        {"name": "file", "description": "二进制文件"},
+        {"name": "flags", "description": "额外参数", "required": false}
+      ]
+    },
+    {
+      "name": "radare2_analyze",
+      "description": "使用 radare2 执行分析命令",
+      "category": "reverse",
+      "programs": ["r2", "radare2"],
+      "arguments": ["-q", "-c", "{commands}", "{file}"],
+      "parameters": [
+        {"name": "file", "description": "二进制文件"},
+        {"name": "commands", "description": "radare2 命令序列"}
+      ]
+    },
+    {
+      "name": "binwalk_extract",
+      "description": "识别并提取嵌入文件",
+      "category": "reverse",
+      "programs": ["binwalk"],
+      "arguments": ["-e", "{flags}", "{file}"],
+      "expand_parameters": ["flags"],
+      "parameters": [
+        {"name": "file", "description": "固件或二进制文件"},
+        {"name": "flags", "description": "额外参数", "required": false}
+      ]
+    },
+    {
+      "name": "ghidra_headless",
+      "description": "运行 Ghidra 无界面分析",
+      "category": "reverse",
+      "programs": ["analyzeHeadless", "ghidra_headless.sh"],
+      "arguments": ["{project_dir}", "julong-project", "-import", "{file}", "-postScript", "{script}"],
+      "parameters": [
+        {"name": "file", "description": "导入文件"},
+        {"name": "project_dir", "description": "Ghidra 项目目录"},
+        {"name": "script", "description": "后处理脚本"}
+      ]
+    },
+    {
+      "name": "exiftool_read",
+      "description": "读取文件元数据",
+      "category": "forensics",
+      "programs": ["exiftool"],
+      "arguments": ["{flags}", "{file}"],
+      "expand_parameters": ["flags"],
+      "parameters": [
+        {"name": "file", "description": "文件路径"},
+        {"name": "flags", "description": "额外参数", "required": false}
+      ]
+    },
+    {
+      "name": "foremost_carve",
+      "description": "文件雕刻与恢复",
+      "category": "forensics",
+      "programs": ["foremost"],
+      "arguments": ["-i", "{file}", "-o", "{output_dir}"],
+      "parameters": [
+        {"name": "file", "description": "输入镜像或文件"},
+        {"name": "output_dir", "description": "输出目录"}
+      ]
+    },
+    {
+      "name": "volatility_analyze",
+      "description": "内存取证分析",
+      "category": "forensics",
+      "programs": ["vol.py", "volatility3", "vol"],
+      "arguments": ["-f", "{file}", "{plugin}", "{flags}"],
+      "expand_parameters": ["flags"],
+      "parameters": [
+        {"name": "file", "description": "内存镜像"},
+        {"name": "plugin", "description": "分析插件"},
+        {"name": "flags", "description": "额外参数", "required": false}
+      ]
+    },
+    {
+      "name": "openssl_analyze",
+      "description": "TLS 证书与握手信息分析",
+      "category": "crypto",
+      "programs": ["openssl"],
+      "arguments": ["s_client", "-connect", "{host}:{port}", "-servername", "{host}"],
+      "parameters": [
+        {"name": "host", "description": "TLS 主机"},
+        {"name": "port", "description": "TLS 端口"}
+      ]
+    },
+    {
+      "name": "powershell_exec",
+      "description": "执行 PowerShell 命令（默认关闭）",
+      "category": "scripting",
+      "programs": ["pwsh", "powershell", "powershell.exe"],
+      "arguments": ["-NoProfile", "-Command", "{command}"],
+      "command_tool": true,
+      "parameters": [
+        {"name": "command", "description": "PowerShell 命令"}
+      ]
+    },
+    {
+      "name": "reg_query",
+      "description": "查询 Windows 注册表",
+      "category": "windows",
+      "platforms": ["windows", "wsl"],
+      "programs": ["reg", "reg.exe"],
+      "arguments": ["query", "{key}", "{flags}"],
+      "expand_parameters": ["flags"],
+      "parameters": [
+        {"name": "key", "description": "注册表路径"},
+        {"name": "flags", "description": "额外参数", "required": false}
+      ]
+    },
+    {
+      "name": "wmic_query",
+      "description": "执行 WMI 查询",
+      "category": "windows",
+      "platforms": ["windows", "wsl"],
+      "programs": ["wmic", "wmic.exe"],
+      "arguments": ["{class_name}", "get", "{properties}", "{flags}"],
+      "expand_parameters": ["properties", "flags"],
+      "parameters": [
+        {"name": "class_name", "description": "WMI 类"},
+        {"name": "properties", "description": "属性列表"},
+        {"name": "flags", "description": "额外参数", "required": false}
+      ]
+    },
+    {
+      "name": "python_exec",
+      "description": "执行 Python 代码（默认关闭）",
+      "category": "scripting",
+      "programs": ["python3", "python", "python.exe"],
+      "arguments": ["-c", "{code}"],
+      "command_tool": true,
+      "parameters": [
+        {"name": "code", "description": "Python 代码"}
+      ]
+    },
+    {
+      "name": "shell_exec",
+      "description": "执行系统 Shell 命令（默认关闭）",
+      "category": "scripting",
+      "programs": ["sh", "bash"],
+      "windows_programs": ["powershell.exe", "powershell"],
+      "arguments": ["-lc", "{command}"],
+      "windows_arguments": ["-NoProfile", "-Command", "{command}"],
+      "command_tool": true,
+      "parameters": [
+        {"name": "command", "description": "Shell 命令"}
+      ]
+    }
+  ]
+}

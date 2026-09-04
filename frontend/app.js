@@ -12,6 +12,7 @@ const el = {
     navDashboard:  $('nav-dashboard'),
     navConfig:     $('nav-config'),
     navProviders:  $('nav-providers'),
+    navMcp:        $('nav-mcp'),
     navSkills:     $('nav-skills'),
     navLog:        $('nav-log'),
     navToggleProxy: $('nav-toggle-proxy'),
@@ -58,6 +59,9 @@ const el = {
     providersList: $('providers-list'),
     providerCount: $('nav-provider-count'),
     providerRuntime: $('provider-runtime'),
+    mcpCount:      $('nav-mcp-count'),
+    mcpBackend:    $('mcp-backend'),
+    mcpToolsGrid:  $('mcp-tools-grid'),
 };
 
 // ── 状态 ────────────────────────────────
@@ -76,6 +80,8 @@ let logEvents = [];
 let logFilter = 'all';
 let logPage = 1;
 const logPageSize = 8;
+let mcpTools = [];
+let mcpAvailability = new Map();
 
 // 类别中文映射
 const categoryMap = {
@@ -130,6 +136,11 @@ function switchPage(page) {
         $('page-providers').classList.add('active');
         $('head-providers').style.display = 'flex';
         loadProviders();
+    } else if (page === 'mcp') {
+        el.navMcp.classList.add('active');
+        $('page-mcp').classList.add('active');
+        $('head-mcp').style.display = 'flex';
+        loadMcpTools();
     } else if (page === 'log') {
         el.navLog.classList.add('active');
         $('page-log').classList.add('active');
@@ -147,6 +158,7 @@ function switchPage(page) {
 el.navDashboard.addEventListener('click', () => switchPage('dashboard'));
 el.navConfig.addEventListener('click', () => switchPage('config'));
 el.navProviders?.addEventListener('click', () => switchPage('providers'));
+el.navMcp?.addEventListener('click', () => switchPage('mcp'));
 el.navSkills.addEventListener('click', () => switchPage('skills'));
 el.navLog.addEventListener('click', () => switchPage('log'));
 document.querySelectorAll('.theme-card').forEach(card => card.addEventListener('click', () => {
@@ -1087,6 +1099,124 @@ $('btn-provider-models')?.addEventListener('click', async () => { const p = prov
 
 listen('provider-switched', event => { const p = event.payload || {}; activeProviderId = p.provider_id || activeProviderId; if (el.providerRuntime) el.providerRuntime.textContent = `${p.provider || '供应商'} · 已自动切换`; showToast(`上游异常，已自动切换至 ${p.provider || '下一供应商'}`, 'ok'); loadProviders(); updateCurrentProviderLabels(); });
 
+// ── MCP 工具目录 ─────────────────────────
+
+const MCP_BACKEND_KEY = 'julong-mcp-backend';
+let mcpCategory = 'all';
+
+function escapeMcpText(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[char]);
+}
+
+function selectedMcpBackend() {
+    return el.mcpBackend?.value || 'auto';
+}
+
+function renderMcpCategories(categories = {}) {
+    const row = $('mcp-categories');
+    if (!row) return;
+    const entries = Object.entries(categories);
+    const total = entries.reduce((sum, [, count]) => sum + Number(count || 0), 0);
+    row.innerHTML = [
+        `<button class="mcp-category-chip${mcpCategory === 'all' ? ' active' : ''}" data-mcp-category="all">全部 <b>${total}</b></button>`,
+        ...entries.map(([name, count]) => `<button class="mcp-category-chip${mcpCategory === name ? ' active' : ''}" data-mcp-category="${escapeMcpText(name)}">${escapeMcpText(name)} <b>${Number(count || 0)}</b></button>`)
+    ].join('');
+    row.querySelectorAll('[data-mcp-category]').forEach(button => {
+        button.addEventListener('click', () => {
+            mcpCategory = button.dataset.mcpCategory || 'all';
+            renderMcpCategories(categories);
+            renderMcpTools();
+        });
+    });
+}
+
+function renderMcpTools() {
+    if (!el.mcpToolsGrid) return;
+    const visible = mcpCategory === 'all' ? mcpTools : mcpTools.filter(tool => tool.category === mcpCategory);
+    if (!visible.length) {
+        el.mcpToolsGrid.innerHTML = '<div class="log-empty">当前分类没有工具</div>';
+        return;
+    }
+    el.mcpToolsGrid.innerHTML = visible.map(tool => {
+        const availability = mcpAvailability.get(tool.name);
+        const state = availability ? (availability.available ? 'ready' : 'missing') : 'unknown';
+        const stateLabel = availability ? (availability.available ? '可用' : '未就绪') : '未检查';
+        const detail = availability?.reason || (tool.command_tool ? '默认关闭，需在导出配置中显式开启' : '等待可用性检查');
+        const parameters = (tool.parameters || []).map(parameter =>
+            `<span class="mcp-param${parameter.required ? ' required' : ''}" title="${escapeMcpText(parameter.description)}">${escapeMcpText(parameter.name)}</span>`
+        ).join('');
+        return `
+            <article class="mcp-tool-card ${state}${tool.command_tool ? ' command-disabled' : ''}">
+                <div class="mcp-tool-top"><span class="mcp-tool-category">${escapeMcpText(tool.category)}</span><span class="mcp-tool-state"><i></i>${stateLabel}</span></div>
+                <strong class="mcp-tool-name">${escapeMcpText(tool.name)}</strong>
+                <p>${escapeMcpText(tool.description)}</p>
+                <div class="mcp-tool-params">${parameters || '<span class="mcp-param">无参数</span>'}</div>
+                <div class="mcp-tool-detail">${escapeMcpText(detail)}</div>
+            </article>`;
+    }).join('');
+}
+
+async function loadMcpTools() {
+    if (!el.mcpToolsGrid) return;
+    el.mcpToolsGrid.innerHTML = '<div class="log-empty">加载工具目录…</div>';
+    mcpAvailability = new Map();
+    try {
+        const backend = selectedMcpBackend();
+        const result = await invoke('get_mcp_tools', { backend });
+        mcpTools = result.tools || [];
+        if (el.mcpCount) el.mcpCount.textContent = String(result.tool_count || mcpTools.length);
+        $('mcp-tool-total').textContent = String(result.tool_count || mcpTools.length);
+        $('mcp-catalog-source').textContent = result.customized ? '用户自定义配置' : '内置稳定目录';
+        $('mcp-catalog-source').title = result.source || '';
+        $('mcp-backend-current').textContent = result.backend?.selected || backend;
+        $('mcp-backend-detail').textContent = `${result.backend?.ready ? '已就绪' : '待配置'} · ${result.backend?.detail || '--'}`;
+        $('mcp-available-total').textContent = '--';
+        $('mcp-command').textContent = `julong-codex mcp serve --backend ${backend}`;
+        renderMcpCategories(result.categories || {});
+        renderMcpTools();
+    } catch (error) {
+        mcpTools = [];
+        el.mcpToolsGrid.innerHTML = `<div class="log-empty">加载失败：${escapeMcpText(error)}</div>`;
+        showToast(`MCP 目录加载失败：${String(error)}`, 'err');
+    }
+}
+
+el.mcpBackend?.addEventListener('change', () => {
+    localStorage.setItem(MCP_BACKEND_KEY, selectedMcpBackend());
+    loadMcpTools();
+});
+
+$('btn-mcp-check')?.addEventListener('click', async event => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    button.textContent = '检查中…';
+    try {
+        const result = await invoke('check_mcp_tools', { backend: selectedMcpBackend() });
+        mcpAvailability = new Map((result || []).map(item => [item.name, item]));
+        const ready = (result || []).filter(item => item.available).length;
+        $('mcp-available-total').textContent = `${ready}/${result.length}`;
+        renderMcpTools();
+        showToast(`MCP 工具检查完成：${ready}/${result.length} 可用`, ready ? 'ok' : 'err');
+    } catch (error) {
+        showToast(`MCP 检查失败：${String(error)}`, 'err');
+    } finally {
+        button.disabled = false;
+        button.textContent = '检查工具';
+    }
+});
+
+$('btn-mcp-export')?.addEventListener('click', async () => {
+    try {
+        const path = await invoke('export_mcp_tools');
+        showToast(`MCP 可编辑配置已导出：${path}`, 'ok');
+        await loadMcpTools();
+    } catch (error) {
+        showToast(String(error), String(error).includes('已存在') ? 'ok' : 'err');
+    }
+});
+
 // ── Skills 管理 ──────────────────────────
 
 async function loadSkills() {
@@ -1197,6 +1327,11 @@ $('btn-skills-redeploy')?.addEventListener('click', async () => {
 
 async function init() {
     let activityStatus = null;
+
+    const savedMcpBackend = localStorage.getItem(MCP_BACKEND_KEY) || 'auto';
+    if (el.mcpBackend && Array.from(el.mcpBackend.options).some(option => option.value === savedMcpBackend)) {
+        el.mcpBackend.value = savedMcpBackend;
+    }
 
     // 检查代理状态
     try {

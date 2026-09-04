@@ -96,6 +96,10 @@
                 <span class="nav-icon">⇄</span> 供应商
                 <span class="nav-badge" id="nav-provider-count">0</span>
             </div>
+            <div class="nav-item" id="nav-mcp">
+                <span class="nav-icon">⌘</span> MCP 工具
+                <span class="nav-badge" id="nav-mcp-count">31</span>
+            </div>
             <div class="nav-item" id="nav-skills">
                 <span class="nav-icon">◈</span> Skills 管理
             </div>
@@ -159,6 +163,16 @@
         <div class="main-head" id="head-providers" style="display:none;">
             <div><span class="main-title">供应商</span><span class="head-subtitle">多中转优先级与自动切换</span></div>
             <div class="main-actions"><button class="btn btn-red solid" id="btn-add-provider">添加供应商</button></div>
+        </div>
+        <div class="main-head" id="head-mcp" style="display:none;">
+            <div><span class="main-title">MCP 工具</span><span class="head-subtitle">配置驱动的本地 / WSL / Docker / SSH 工具后端</span></div>
+            <div class="main-actions">
+                <select class="mcp-backend-select" id="mcp-backend" aria-label="MCP 执行后端">
+                    <option value="auto">自动检测</option><option value="local">本机</option><option value="wsl">WSL</option><option value="docker">Docker</option><option value="ssh">SSH</option>
+                </select>
+                <button class="btn" id="btn-mcp-export">导出配置</button>
+                <button class="btn btn-red solid" id="btn-mcp-check">检查工具</button>
+            </div>
         </div>
 
         <!-- Skills head -->
@@ -297,7 +311,7 @@
                 </div>
                 <div class="cfg-block">
                     <div class="cfg-block-head">系统信息</div>
-                    <div class="cfg-line"><div class="cfg-k">篡改规则</div><div class="cfg-v">22 条（中/英/俄/日 × 4 优先级）</div></div>
+                    <div class="cfg-line"><div class="cfg-k">篡改规则</div><div class="cfg-v">35 条（平台级 + 多语言分级检测）</div></div>
                     <div class="cfg-line"><div class="cfg-k">记忆记录</div><div class="cfg-v" id="cfg-memory-count">0 条成功交互</div></div>
                     <div class="cfg-line"><div class="cfg-k">代理端口</div><div class="cfg-v">127.0.0.1:8080</div></div>
                     <div class="cfg-line"><div class="cfg-k">SSE 修复</div><div class="cfg-v amber">已启用（response.completed 包装）</div></div>
@@ -309,6 +323,23 @@
             <div class="providers-scroll">
                 <div class="provider-summary"><div><strong id="provider-summary-title">供应商列表</strong><span id="provider-summary-sub">拖拽卡片调整优先级，当前供应商自动置顶</span></div><span class="provider-runtime" id="provider-runtime">代理未运行</span></div>
                 <div class="providers-list" id="providers-list"><div class="log-empty">加载中…</div></div>
+            </div>
+        </div>
+
+        <!-- MCP 工具 -->
+        <div class="main-content" id="page-mcp">
+            <div class="mcp-scroll">
+                <section class="mcp-summary-grid">
+                    <div class="overview-card accent"><div class="overview-label">工具目录</div><div class="overview-value" id="mcp-tool-total">31</div><div class="overview-meta" id="mcp-catalog-source">读取中…</div></div>
+                    <div class="overview-card"><div class="overview-label">当前后端</div><div class="overview-value" id="mcp-backend-current">--</div><div class="overview-meta" id="mcp-backend-detail">等待检查</div></div>
+                    <div class="overview-card"><div class="overview-label">本机可用</div><div class="overview-value" id="mcp-available-total">--</div><div class="overview-meta">检查结果不会自动安装工具</div></div>
+                </section>
+                <section class="mcp-guide">
+                    <div><strong>Codex MCP 接入</strong><span>CLI 通过 stdio 暴露工具；任意 Shell、Python、PowerShell 命令工具默认关闭。</span></div>
+                    <code id="mcp-command">julong-codex mcp serve --backend auto</code>
+                </section>
+                <div class="mcp-category-row" id="mcp-categories"></div>
+                <div class="mcp-tools-grid" id="mcp-tools-grid"><div class="log-empty">加载工具目录…</div></div>
             </div>
         </div>
 
