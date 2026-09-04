@@ -7,7 +7,7 @@ use crate::transaction::FileTransaction;
 use chrono::Utc;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -219,57 +219,33 @@ pub fn activate(provider: &Provider, proxy_active: bool) -> Result<String, Strin
         }
         atomic_write(&relay, url.as_bytes())?;
 
-        if auth_path.exists() && !provider.api_key.trim().is_empty() {
-            let text = fs::read_to_string(&auth_path)
-                .map_err(|e| format!("read auth.json failed: {e}"))?;
-            let mut value: Value =
-                serde_json::from_str(&text).map_err(|e| format!("parse auth.json failed: {e}"))?;
-            if let Some(obj) = value.as_object_mut() {
-                obj.insert(
-                    "OPENAI_API_KEY".into(),
-                    Value::String(provider.api_key.clone()),
-                );
-            }
-            let out = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
+        let auth_exists = auth_path.exists();
+        let auth_text = if auth_exists {
+            fs::read_to_string(&auth_path).map_err(|e| format!("read auth.json failed: {e}"))?
+        } else {
+            String::new()
+        };
+        // 首装或用户清空 auth.json 后，仍然生成合法 JSON 并写入当前供应商的 Key。
+        // 没有 Key 时保留已有认证内容；空文件则初始化为空对象，避免下次启动解析失败。
+        if !provider.api_key.trim().is_empty() {
+            let out = update_auth_content(&auth_text, &provider.api_key)?;
             atomic_write(&auth_path, out.as_bytes())?;
+        } else if !auth_exists || auth_text.trim().is_empty() {
+            atomic_write(&auth_path, b"{}\n")?;
         }
 
-        if cfg.exists() {
-            let text =
-                fs::read_to_string(&cfg).map_err(|e| format!("read config.toml failed: {e}"))?;
-            let mut out = text.clone();
-            out = replace_or_append(
-                &out,
-                r#"(?m)^\s*model\s*=\s*"[^"]*""#,
-                &format!(r#"model = "{}""#, provider.default_model),
-            );
-            if let Some(section) = out.find("[model_providers.custom]") {
-                let end = out[section..]
-                    .find("\n[")
-                    .map(|n| section + n)
-                    .unwrap_or(out.len());
-                let head = &out[..section];
-                let body = &out[section..end];
-                let tail = &out[end..];
-                let body = replace_or_append(
-                    body,
-                    r#"(?m)^\s*name\s*=\s*"[^"]*""#,
-                    &format!(r#"name = "{}""#, provider.name),
-                );
-                let base = if proxy_active {
-                    "http://127.0.0.1:8080"
-                } else {
-                    &url
-                };
-                let body = replace_or_append(
-                    &body,
-                    r#"(?m)^\s*base_url\s*=\s*"[^"]*""#,
-                    &format!(r#"base_url = "{}""#, base),
-                );
-                out = format!("{}{}{}", head, body, tail);
-            }
-            atomic_write(&cfg, out.as_bytes())?;
-        }
+        let text = if cfg.exists() {
+            fs::read_to_string(&cfg).map_err(|e| format!("read config.toml failed: {e}"))?
+        } else {
+            String::new()
+        };
+        let base = if proxy_active {
+            "http://127.0.0.1:8080"
+        } else {
+            &url
+        };
+        let out = render_provider_config(&text, provider, base);
+        atomic_write(&cfg, out.as_bytes())?;
         Ok(url)
     })();
 
@@ -290,10 +266,126 @@ pub fn activate(provider: &Provider, proxy_active: bool) -> Result<String, Strin
     }
 }
 
+fn toml_string(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\r', "\\r")
+        .replace('\n', "\\n")
+}
+
+fn update_auth_content(existing: &str, api_key: &str) -> Result<String, String> {
+    let mut value = if existing.trim().is_empty() {
+        Value::Object(Map::new())
+    } else {
+        serde_json::from_str(existing).map_err(|e| format!("parse auth.json failed: {e}"))?
+    };
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| "auth.json must contain a JSON object".to_string())?;
+    if !api_key.trim().is_empty() {
+        object.insert(
+            "OPENAI_API_KEY".into(),
+            Value::String(api_key.trim().to_string()),
+        );
+    }
+    serde_json::to_string_pretty(&value).map_err(|e| format!("serialize auth.json failed: {e}"))
+}
+
+fn render_provider_config(existing: &str, provider: &Provider, base_url: &str) -> String {
+    let model = if provider.default_model.trim().is_empty() {
+        "gpt-5.6-sol"
+    } else {
+        provider.default_model.trim()
+    };
+    let model_line = format!(r#"model = "{}""#, toml_string(model));
+    let provider_line = r#"model_provider = "custom""#;
+    let instructions_line = r#"model_instructions_file = "./bridge.md""#;
+    let mut out = existing.trim_end().to_string();
+
+    if out.trim().is_empty() {
+        return format!(
+            "{}\n{}\n{}\n\n[model_providers.custom]\nname = \"{}\"\nbase_url = \"{}\"\n",
+            model_line,
+            provider_line,
+            instructions_line,
+            toml_string(&provider.name),
+            toml_string(base_url)
+        );
+    }
+
+    let mut missing_root_lines = Vec::new();
+    if Regex::new(r#"(?m)^\s*model\s*=\s*"[^"]*""#)
+        .unwrap()
+        .is_match(&out)
+    {
+        out = replace_or_append(&out, r#"(?m)^\s*model\s*=\s*"[^"]*""#, &model_line);
+    } else {
+        missing_root_lines.push(model_line);
+    }
+    if Regex::new(r#"(?m)^\s*model_provider\s*=\s*"[^"]*""#)
+        .unwrap()
+        .is_match(&out)
+    {
+        out = replace_or_append(
+            &out,
+            r#"(?m)^\s*model_provider\s*=\s*"[^"]*""#,
+            provider_line,
+        );
+    } else {
+        missing_root_lines.push(provider_line.to_string());
+    }
+    if Regex::new(r#"(?m)^\s*model_instructions_file\s*=\s*"[^"]*""#)
+        .unwrap()
+        .is_match(&out)
+    {
+        out = replace_or_append(
+            &out,
+            r#"(?m)^\s*model_instructions_file\s*=\s*"[^"]*""#,
+            instructions_line,
+        );
+    } else {
+        missing_root_lines.push(instructions_line.to_string());
+    }
+    if !missing_root_lines.is_empty() {
+        out = format!("{}\n{}", missing_root_lines.join("\n"), out.trim_start());
+    }
+
+    let section = "[model_providers.custom]";
+    if let Some(start) = out.find(section) {
+        let end = out[start..]
+            .find("\n[")
+            .map(|offset| start + offset)
+            .unwrap_or(out.len());
+        let head = &out[..start];
+        let body = &out[start..end];
+        let tail = &out[end..];
+        let body = replace_or_append(
+            body,
+            r#"(?m)^\s*name\s*=\s*"[^"]*""#,
+            &format!(r#"name = "{}""#, toml_string(&provider.name)),
+        );
+        let body = replace_or_append(
+            &body,
+            r#"(?m)^\s*base_url\s*=\s*"[^"]*""#,
+            &format!(r#"base_url = "{}""#, toml_string(base_url)),
+        );
+        out = format!("{}{}{}", head, body, tail);
+    } else {
+        out.push_str(&format!(
+            "\n\n{}\nname = \"{}\"\nbase_url = \"{}\"\n",
+            section,
+            toml_string(&provider.name),
+            toml_string(base_url)
+        ));
+    }
+    format!("{}\n", out.trim_end())
+}
+
 fn replace_or_append(text: &str, pattern: &str, replacement: &str) -> String {
     let re = Regex::new(pattern).unwrap();
     if re.is_match(text) {
-        re.replace(text, replacement).into_owned()
+        re.replace(text, regex::NoExpand(replacement)).into_owned()
     } else {
         format!("{}\n{}", text.trim_end(), replacement)
     }
@@ -392,4 +484,93 @@ pub async fn models(provider: &Provider) -> Result<Vec<String>, String> {
                 .collect()
         })
         .unwrap_or_default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn provider() -> Provider {
+        Provider {
+            id: "provider-1".into(),
+            name: "主力供应商".into(),
+            note: String::new(),
+            official_url: String::new(),
+            api_key: "sk-test".into(),
+            request_url: "https://relay.example".into(),
+            full_url: false,
+            default_model: "gpt-test".into(),
+            models: Vec::new(),
+            last_latency_ms: None,
+            last_status: String::new(),
+            last_error: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn empty_auth_is_initialized_with_provider_key() {
+        let value = update_auth_content("", "sk-test").unwrap();
+        let parsed: Value = serde_json::from_str(&value).unwrap();
+        assert_eq!(parsed["OPENAI_API_KEY"], "sk-test");
+    }
+
+    #[test]
+    fn empty_config_is_initialized_with_provider_section() {
+        let value = render_provider_config("", &provider(), "http://127.0.0.1:8080");
+        let parsed: toml::Value = toml::from_str(&value).unwrap();
+        assert!(value.contains("model = \"gpt-test\""));
+        assert!(value.contains("model_provider = \"custom\""));
+        assert!(value.contains("model_instructions_file = \"./bridge.md\""));
+        assert!(value.contains("[model_providers.custom]"));
+        assert!(value.contains("name = \"主力供应商\""));
+        assert!(value.contains("base_url = \"http://127.0.0.1:8080\""));
+        assert_eq!(parsed["model_provider"].as_str(), Some("custom"));
+    }
+
+    #[test]
+    fn existing_config_gets_root_keys_before_provider_table() {
+        let value = render_provider_config(
+            "sandbox_mode = \"workspace-write\"\n\n[model_providers.custom]\nname = \"old\"\nbase_url = \"https://old.example/v1\"\n",
+            &provider(),
+            "https://relay.example/v1",
+        );
+        let _: toml::Value = toml::from_str(&value).unwrap();
+        assert!(value.starts_with("model = \"gpt-test\"\nmodel_provider = \"custom\""));
+        assert!(value.contains("sandbox_mode = \"workspace-write\""));
+        assert!(value.contains("base_url = \"https://relay.example/v1\""));
+    }
+
+    #[test]
+    fn activate_initializes_empty_codex_files() {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "julong-provider-activate-{}",
+            Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("config.toml"), "").unwrap();
+        fs::write(root.join("auth.json"), "").unwrap();
+
+        let previous = std::env::var_os("CODEX_HOME");
+        std::env::set_var("CODEX_HOME", &root);
+        let result = activate(&provider(), true);
+        if let Some(value) = previous {
+            std::env::set_var("CODEX_HOME", value);
+        } else {
+            std::env::remove_var("CODEX_HOME");
+        }
+
+        result.unwrap();
+        let config = fs::read_to_string(root.join("config.toml")).unwrap();
+        let auth: Value =
+            serde_json::from_str(&fs::read_to_string(root.join("auth.json")).unwrap()).unwrap();
+        assert!(config.contains("model_provider = \"custom\""));
+        assert!(config.contains("base_url = \"http://127.0.0.1:8080\""));
+        assert_eq!(auth["OPENAI_API_KEY"], "sk-test");
+        fs::remove_dir_all(root).unwrap();
+    }
 }
