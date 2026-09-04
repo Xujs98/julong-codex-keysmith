@@ -524,6 +524,7 @@ function updateActivityStatus(payload = {}) {
         const isActive = active.has(key);
         bot.classList.toggle('active', isActive);
         bot.classList.toggle('idle', !isActive);
+        bot.dataset.activityState = isActive ? 'running' : 'idle';
         bot.dataset.activityActive = String(isActive);
         const mode = bot.querySelector('.bot-mode');
         if (mode) mode.textContent = isActive ? '敲击中 · Codex 执行' : '悠闲喝咖啡';
@@ -565,6 +566,7 @@ function pulseRobot(category) {
     // 突出对应机器人，并复用键盘/屏幕动画，避免只闪一下外框。
     bot.classList.add('active', 'pulse');
     bot.classList.remove('idle');
+    bot.dataset.activityState = 'running';
     bot.dataset.activityActive = bot.dataset.activityActive || 'false';
     const mode = bot.querySelector('.bot-mode');
     if (mode) mode.textContent = '敲击中 · 响应已篡改';
@@ -578,6 +580,7 @@ function pulseRobot(category) {
         }
         bot.classList.remove('active');
         bot.classList.add('idle');
+        bot.dataset.activityState = 'idle';
         if (mode) mode.textContent = '悠闲喝咖啡';
         setBotActivityScreen(bot, false);
     }, 1600);

@@ -1157,79 +1157,6 @@ fn activity_command(
     )
 }
 
-/// SSE 服务可能在发送终止事件后继续保持 HTTP 连接。检测到协议终止标记后，
-/// 立即结束本次活动，避免 Codex 已完成而仪表盘仍显示“执行中”。
-fn sse_stream_complete(buffer: &[u8]) -> bool {
-    let text = String::from_utf8_lossy(buffer);
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed == "data: [DONE]" || trimmed == "data:[DONE]" {
-            return true;
-        }
-        if trimmed.eq_ignore_ascii_case("event: response.completed")
-            || trimmed.eq_ignore_ascii_case("event: response.done")
-        {
-            return true;
-        }
-        let Some(data) = trimmed.strip_prefix("data:") else {
-            continue;
-        };
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(data.trim()) else {
-            continue;
-        };
-        let event_type = value
-            .get("type")
-            .and_then(|item| item.as_str())
-            .unwrap_or("");
-        if event_type.eq_ignore_ascii_case("response.completed")
-            || event_type.eq_ignore_ascii_case("response.done")
-            || value
-                .get("status")
-                .and_then(|item| item.as_str())
-                .map(|status| {
-                    status.eq_ignore_ascii_case("completed") || status.eq_ignore_ascii_case("done")
-                })
-                .unwrap_or(false)
-        {
-            return true;
-        }
-    }
-    false
-}
-
-#[cfg(test)]
-mod activity_status_tests {
-    use super::sse_stream_complete;
-
-    #[test]
-    fn detects_standard_sse_done_marker() {
-        assert!(sse_stream_complete(
-            b"data: {\"delta\":\"ok\"}\n\ndata: [DONE]\n\n"
-        ));
-    }
-
-    #[test]
-    fn detects_responses_completed_event() {
-        assert!(sse_stream_complete(
-            b"data: {\"type\":\"response.completed\"}\n\n"
-        ));
-    }
-
-    #[test]
-    fn detects_event_name_completion_marker() {
-        assert!(sse_stream_complete(
-            b"event: response.completed\ndata: {}\n\n"
-        ));
-    }
-
-    #[test]
-    fn ignores_partial_or_unrelated_sse_events() {
-        assert!(!sse_stream_complete(
-            b"data: {\"type\":\"response.output_text.delta\"}\n\n"
-        ));
-    }
-}
-
 async fn handle_proxy(
     req: axum::extract::Request,
     core: Arc<MitmCore>,
@@ -1325,7 +1252,7 @@ async fn handle_proxy(
         .map(|ct| ct.contains("text/event-stream"))
         .unwrap_or(false);
 
-    // BUG-4 修复: keepalive channel 从上游请求发出时即开始计时
+    // 活动面板只通过 Tauri 事件观察请求；不得向 Codex 响应流注入 keepalive 或其他字节。
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<bytes::Bytes, std::io::Error>>();
     let core_clone = core.clone();
     let activity_for_tamper = activity.clone();
@@ -1351,63 +1278,36 @@ async fn handle_proxy(
         let mut accumulated = Vec::with_capacity(65536);
         let mut stream = upstream_resp.bytes_stream();
 
-        if is_sse {
-            // SSE: 缓冲上游 chunk, 每 500ms 发 keepalive 注释防 CLI 超时
-            let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
-            interval.tick().await; // 跳过首次立即触发
+        // 先完整读取上游响应，再交给既有响应拦截器。活动监控只复制长度和阶段信息，
+        // 不提前结束上游 stream，也不向下游写入任何额外内容。
+        let mut stream_error = None;
+        while let Some(chunk_result) = stream.next().await {
+            match chunk_result {
+                Ok(chunk) => {
+                    accumulated.extend_from_slice(&chunk);
+                    let progress = 36u8.saturating_add((accumulated.len() / 4096).min(50) as u8);
+                    let phase = if is_sse {
+                        "流式处理"
+                    } else {
+                        "读取响应"
+                    };
+                    activity_for_progress.update_phase(&activity_category, phase, progress);
+                }
+                Err(error) => {
+                    stream_error = Some(error.to_string());
+                    activity_for_progress.update_phase(&activity_category, "上游读取失败", 82);
+                    break;
+                }
+            }
+        }
 
-            loop {
-                tokio::select! {
-                    chunk_result = stream.next() => {
-                        match chunk_result {
-                            Some(Ok(chunk)) => {
-                                accumulated.extend_from_slice(&chunk);
-                                let progress = 36u8
-                                    .saturating_add((accumulated.len() / 4096).min(50) as u8);
-                                activity_for_progress.update_phase(&activity_category, "流式处理", progress);
-                                if sse_stream_complete(&accumulated) {
-                                    break;
-                                }
-                            }
-                            Some(Err(e)) => {
-                                tracing::warn!("upstream stream error: {}", e);
-                                activity_for_progress.update_phase(&activity_category, "上游断开", 82);
-                                break;
-                            }
-                            None => break,
-                        }
-                    }
-                    _ = interval.tick() => {
-                        if tx
-                            .send(Ok(bytes::Bytes::from_static(b": keepalive\n\n")))
-                            .is_err()
-                        {
-                            return; // CLI 已断开, 停止一切
-                        }
-                    }
-                }
-            }
-        } else {
-            // 非 SSE: 直接缓冲, 无 keepalive
-            while let Some(chunk_result) = stream.next().await {
-                match chunk_result {
-                    Ok(chunk) => {
-                        accumulated.extend_from_slice(&chunk);
-                        let progress =
-                            36u8.saturating_add((accumulated.len() / 4096).min(50) as u8);
-                        activity_for_progress.update_phase(
-                            &activity_category,
-                            "读取响应",
-                            progress,
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!("upstream stream error: {}", e);
-                        activity_for_progress.update_phase(&activity_category, "上游断开", 82);
-                        break;
-                    }
-                }
-            }
+        // 不要把上游断流时已收到的半截 body 当作正常响应交给 Codex；这正是
+        // “incomplete utf-8 byte sequence” 的典型来源。让 HTTP 流自然结束，
+        // 同时保留真实错误到日志，避免监控层伪造响应。
+        if let Some(error) = stream_error {
+            tracing::warn!(error = %error, bytes = accumulated.len(), "upstream response stream aborted");
+            drop(tx);
+            return;
         }
 
         let accumulated_bytes = bytes::Bytes::from(accumulated);
