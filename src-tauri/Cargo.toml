@@ -2,6 +2,7 @@
 name = "julong-codex-keysmith"
 version = "0.2.0"
 edition = "2021"
+default-run = "julong-codex-keysmith"
 
 [patch.crates-io]
 # Tauri 2.11.5 probes the WebKit bundle during startup. On some installed

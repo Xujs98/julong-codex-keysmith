@@ -83,6 +83,8 @@ npm run dev
 
 `npm run dev` 保持快速桌面调试；Release 构建脚本会额外构建并打包 `julong-codex` sidecar。
 
+桌面端主程序固定使用 Cargo target `julong-codex-keysmith`，命令行与 MCP 侧车固定使用 `julong-codex`；`mainBinaryName` 与 Cargo `default-run` 已显式绑定，避免多 binary 构建时把 CLI 打进应用入口。若从旧版构建缓存升级，首次打包前可执行一次 `cargo clean --manifest-path src-tauri/Cargo.toml`。
+
 ### Release 构建
 
 ```bash
