@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tauri::{AppHandle, Emitter};
+use tokio::sync::watch;
 use tokio::time::{sleep, Duration};
 
 #[derive(Clone, Serialize)]
@@ -53,9 +54,9 @@ struct ActiveTask {
 }
 
 pub struct ActivityTracker {
-    app_handle: AppHandle,
     active: Mutex<BTreeMap<String, ActiveTask>>,
     heartbeat_running: AtomicBool,
+    event_tx: watch::Sender<ActivityStatus>,
 }
 
 pub struct ActiveRequest {
@@ -65,10 +66,18 @@ pub struct ActiveRequest {
 
 impl ActivityTracker {
     pub fn new(app_handle: AppHandle) -> Self {
+        let (event_tx, mut event_rx) = watch::channel(ActivityStatus::idle());
+        tokio::spawn(async move {
+            while event_rx.changed().await.is_ok() {
+                let snapshot = event_rx.borrow().clone();
+                let _ = app_handle.emit("activity-status", snapshot);
+            }
+        });
+
         Self {
-            app_handle,
             active: Mutex::new(BTreeMap::new()),
             heartbeat_running: AtomicBool::new(false),
+            event_tx,
         }
     }
 
@@ -232,7 +241,8 @@ impl ActivityTracker {
 
     fn emit(&self, status: &str, category: &str) {
         let snapshot = self.status_snapshot(status, category);
-        let _ = self.app_handle.emit("activity-status", snapshot);
+        // watch 只保留最新状态，UI 事件发送在独立任务中执行，不会阻塞代理请求。
+        let _ = self.event_tx.send(snapshot);
     }
 
     fn status_snapshot(&self, status: &str, category: &str) -> ActivityStatus {
