@@ -59,6 +59,10 @@ pub struct ToolDefinition {
     pub expand_parameters: Vec<String>,
     #[serde(default)]
     pub command_tool: bool,
+    /// Whether this tool is exposed to MCP clients and can be executed.
+    /// Missing values in older catalogs remain enabled for compatibility.
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
     #[serde(default)]
     pub parameters: Vec<ToolParameter>,
 }
@@ -223,15 +227,34 @@ impl ToolRunner {
         let (selected, ready, detail) = match &self.backend {
             Backend::Local => ("local".to_string(), true, "本机执行后端".to_string()),
             Backend::Wsl { distro } => {
-                let ready = command_exists("wsl");
+                let ready =
+                    command_success("wsl", &["-d", distro, "--", "true"], Duration::from_secs(5));
                 ("wsl".to_string(), ready, format!("发行版: {distro}"))
             }
             Backend::Docker { container } => {
-                let ready = command_exists("docker");
+                let ready = command_output(
+                    "docker",
+                    &["inspect", "-f", "{{.State.Running}}", container],
+                    Duration::from_secs(5),
+                )
+                .map(|output| output.trim() == "true")
+                .unwrap_or(false);
                 ("docker".to_string(), ready, format!("容器: {container}"))
             }
             Backend::Ssh { host } => {
-                let ready = !host.trim().is_empty() && command_exists("ssh");
+                let ready = !host.trim().is_empty()
+                    && command_success(
+                        "ssh",
+                        &[
+                            "-o",
+                            "BatchMode=yes",
+                            "-o",
+                            "ConnectTimeout=5",
+                            host,
+                            "true",
+                        ],
+                        Duration::from_secs(7),
+                    );
                 ("ssh".to_string(), ready, format!("主机: {host}"))
             }
         };
@@ -264,6 +287,17 @@ impl ToolRunner {
                         available: false,
                         executable: None,
                         reason: "高权限命令工具默认关闭".into(),
+                    };
+                }
+                if !tool.enabled {
+                    return ToolAvailability {
+                        name: tool.name.clone(),
+                        category: tool.category.clone(),
+                        description: tool.description.clone(),
+                        backend: self.backend_name(),
+                        available: false,
+                        executable: None,
+                        reason: "工具已停用".into(),
                     };
                 }
                 if !platform_allowed(tool, &self.backend) {
@@ -315,11 +349,22 @@ impl ToolRunner {
                 tool.name
             ));
         }
+        if !tool.enabled {
+            return Err(format!("工具 {} 已停用，请先启用", tool.name));
+        }
+        if !platform_allowed(tool, &self.backend) {
+            return Err(format!("工具 {} 不适用于当前后端", tool.name));
+        }
         validate_parameters(tool, args)?;
         let program = tool_programs(tool, &self.backend)
             .into_iter()
             .find(|candidate| self.backend.program_exists(candidate))
-            .ok_or_else(|| format!("未找到工具可执行文件: {}", tool.programs.join(", ")))?;
+            .ok_or_else(|| {
+                format!(
+                    "未找到工具可执行文件: {}",
+                    tool_programs(tool, &self.backend).join(", ")
+                )
+            })?;
         let argument_template = if cfg!(windows)
             && matches!(self.backend, Backend::Local)
             && !tool.windows_arguments.is_empty()
@@ -555,6 +600,51 @@ pub fn export_builtin_catalog(path: &Path) -> Result<(), String> {
         .map_err(|e| format!("写入 MCP 工具目录失败 {}: {e}", path.display()))
 }
 
+/// Enable or disable one tool in a user catalog. The file is created from the
+/// built-in catalog when it does not exist, and replaced atomically so an
+/// interrupted write does not leave a partial JSON file.
+pub fn set_tool_enabled(path: &Path, name: &str, enabled: bool) -> Result<(), String> {
+    let mut catalog = load_catalog(path.exists().then_some(path))?;
+    let tool = catalog
+        .tools
+        .iter_mut()
+        .find(|tool| tool.name == name)
+        .ok_or_else(|| format!("未知 MCP 工具: {name}"))?;
+    tool.enabled = enabled;
+    save_catalog(path, &catalog)
+}
+
+pub fn set_command_tools_enabled(path: &Path, enabled: bool) -> Result<(), String> {
+    let mut catalog = load_catalog(path.exists().then_some(path))?;
+    catalog.defaults.allow_command_tools = enabled;
+    save_catalog(path, &catalog)
+}
+
+fn save_catalog(path: &Path, catalog: &ToolCatalog) -> Result<(), String> {
+    let text = serde_json::to_string_pretty(&catalog)
+        .map_err(|e| format!("序列化 MCP 工具目录失败: {e}"))?;
+    let temp = path.with_extension("json.tmp");
+    std::fs::write(&temp, format!("{text}\n"))
+        .map_err(|e| format!("写入 MCP 工具目录失败 {}: {e}", temp.display()))?;
+    replace_catalog_file(&temp, path)
+        .map_err(|e| format!("替换 MCP 工具目录失败 {}: {e}", path.display()))
+}
+
+#[cfg(not(windows))]
+fn replace_catalog_file(temp: &Path, target: &Path) -> std::io::Result<()> {
+    std::fs::rename(temp, target)
+}
+
+#[cfg(windows)]
+fn replace_catalog_file(temp: &Path, target: &Path) -> std::io::Result<()> {
+    // Windows does not allow rename-over-existing. The temporary file still
+    // ensures serialization and writing complete before the replacement.
+    if target.exists() {
+        std::fs::remove_file(target)?;
+    }
+    std::fs::rename(temp, target)
+}
+
 pub fn run_mcp_stdio(runner: &ToolRunner) -> Result<(), String> {
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
@@ -594,6 +684,7 @@ pub fn handle_mcp_request(runner: &ToolRunner, request: &Value) -> Option<Value>
                 .catalog
                 .tools
                 .iter()
+                .filter(|tool| tool.enabled)
                 .filter(|tool| !tool.command_tool || runner.catalog.defaults.allow_command_tools)
                 .map(|tool| {
                     let mut properties = serde_json::Map::new();
@@ -901,6 +992,10 @@ fn default_required() -> bool {
     true
 }
 
+fn default_enabled() -> bool {
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -935,6 +1030,7 @@ mod tests {
             windows_arguments: Vec::new(),
             expand_parameters: Vec::new(),
             command_tool: false,
+            enabled: true,
             parameters: vec![ToolParameter {
                 name: "value".into(),
                 description: String::new(),
@@ -958,6 +1054,33 @@ mod tests {
         let tools = response["result"]["tools"].as_array().unwrap();
         assert_eq!(tools.len(), 28);
         assert!(!tools.iter().any(|tool| tool["name"] == "shell_exec"));
+    }
+
+    #[test]
+    fn disabled_tools_are_not_exposed_or_executable() {
+        let mut catalog = ToolCatalog::builtin().unwrap();
+        catalog
+            .tools
+            .iter_mut()
+            .find(|tool| tool.name == "curl_fetch")
+            .unwrap()
+            .enabled = false;
+        let runner = ToolRunner::new(catalog, Some("local")).unwrap();
+        let response = handle_mcp_request(
+            &runner,
+            &json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}),
+        )
+        .unwrap();
+        assert!(!response["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["name"] == "curl_fetch"));
+        let args = BTreeMap::from([(String::from("url"), String::from("https://example.test"))]);
+        assert!(runner
+            .execute("curl_fetch", &args)
+            .unwrap_err()
+            .contains("已停用"));
     }
 
     #[test]

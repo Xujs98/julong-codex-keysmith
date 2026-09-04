@@ -202,9 +202,14 @@ src-tauri/target/debug/julong-codex stop
 macOS Release 会将 CLI 放在 `矩龙破甲.app/Contents/MacOS/julong-codex`。需要全局命令时，可在安装 App 后创建软链接：
 
 ```bash
-sudo ln -sf "/Applications/矩龙破甲.app/Contents/MacOS/julong-codex" /usr/local/bin/julong-codex
+./scripts/install-cli.sh
+# 若 App 不在 /Applications：
+./scripts/install-cli.sh "/path/to/矩龙破甲.app"
+# 按脚本提示将 ~/.local/bin 加入 PATH 后：
 julong-codex status
 ```
+
+终端提示 `zsh: command not found: julong-codex` 时，通常是尚未建立这个软链接，或 `~/.local/bin` 尚未加入当前 shell 的 `PATH`；重新运行脚本并执行 `source ~/.zshrc` 即可。Windows 安装包将 CLI 放在安装目录，首次使用时把该目录加入用户 PATH，然后运行 `julong-codex.exe status`。
 
 Windows 目标机的 NSIS 安装包会携带 `julong-codex.exe`。可在安装目录直接运行，或将安装目录加入用户 `PATH` 后运行 `julong-codex.exe status`。`start` 可重复执行且不会重复部署；`stop` 可重复恢复；`status` 同时显示代理进程、8080 端口、部署完整性和中转站。
 
@@ -221,6 +226,10 @@ Windows 目标机的 NSIS 安装包会携带 `julong-codex.exe`。可在安装�
 ```bash
 julong-codex mcp list
 julong-codex mcp export
+julong-codex mcp enable curl_fetch
+julong-codex mcp disable curl_fetch
+julong-codex mcp allow-commands
+julong-codex mcp deny-commands
 julong-codex mcp doctor --backend local
 julong-codex mcp doctor --backend wsl --wsl-distro kali-linux
 julong-codex mcp doctor --backend docker --docker-container kali-tools
@@ -228,17 +237,21 @@ julong-codex mcp doctor --backend ssh --ssh-host user@host
 julong-codex mcp serve --backend auto
 ```
 
-工具程序需已存在于选中的本机、WSL 发行版、Docker 容器或 SSH 主机。桌面端“MCP 工具”页可切换后端、查看分类、检查可用性，并将内置目录导出到 `~/.codex/julong-mcp-tools.json` 作为用户级配置；已存在的文件不会被覆盖。
+工具程序需已存在于选中的本机、WSL 发行版、Docker 容器或 SSH 主机。桌面端“MCP 工具”页可切换后端、查看分类、检查可用性，并通过每张卡片的“启用/停用”开关控制是否暴露给 Codex。开关状态写入 `~/.codex/julong-mcp-tools.json`，CLI 的 `mcp enable/disable TOOL` 与桌面端共享同一配置；旧目录未写入 `enabled` 时默认启用。停用工具不会出现在 MCP `tools/list`，直接调用也会返回错误。检查结果只检测命令是否存在，不会自动安装工具。
 
-在 `~/.codex/config.toml` 注册 MCP stdio 服务：
+Codex 可以通过 MCP stdio 调用已启用且已安装的工具。把以下配置加入 `~/.codex/config.toml`，重启 Codex 后即可在工具列表中使用：
 
 ```toml
 [mcp_servers.julong_tools]
-command = "julong-codex"
+command = "/绝对路径/julong-codex"
 args = ["mcp", "serve", "--backend", "auto"]
 startup_timeout_sec = 30
 tool_timeout_sec = 600
 ```
+
+常用流程：`julong-codex mcp doctor --backend local` 检查依赖，桌面端启用工具，然后由 Codex 选择工具并传入卡片显示的参数；也可用 `julong-codex mcp call TOOL key=value ...` 手工验证。`command_tool` 类型仍受 `allow_command_tools` 总开关保护。
+
+依赖安装建议：macOS 可使用 Homebrew 安装 `nmap masscan sqlmap nikto ffuf gobuster hydra john hashcat binwalk exiftool foremost volatility openssl` 等命令；Windows 本机工具使用对应的 `.exe` 并加入用户 PATH，Linux-only 工具选择 WSL 或 Docker 后端（例如 `--backend wsl --wsl-distro kali-linux`）。安装后重新点击“检查工具”或运行 `mcp doctor`，目录状态会即时更新；应用只负责发现和调用，不会在后台修改系统软件。
 
 ### 供应商功能验证
 

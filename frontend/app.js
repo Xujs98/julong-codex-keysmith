@@ -1312,9 +1312,10 @@ function renderMcpTools() {
     }
     el.mcpToolsGrid.innerHTML = visible.map(tool => {
         const availability = mcpAvailability.get(tool.name);
-        const state = availability ? (availability.available ? 'ready' : 'missing') : 'unknown';
-        const stateLabel = availability ? (availability.available ? '可用' : '未就绪') : '未检查';
-        const detail = availability?.reason || (tool.command_tool ? '默认关闭，需在导出配置中显式开启' : '等待可用性检查');
+        const disabled = tool.enabled === false;
+        const state = disabled ? 'disabled' : (availability ? (availability.available ? 'ready' : 'missing') : 'unknown');
+        const stateLabel = disabled ? '已停用' : (availability ? (availability.available ? '可用' : '未就绪') : '未检查');
+        const detail = disabled ? '已停用，不会暴露给 Codex MCP' : (availability?.reason || (tool.command_tool ? '高权限工具默认关闭' : '等待可用性检查'));
         const parameters = (tool.parameters || []).map(parameter =>
             `<span class="mcp-param${parameter.required ? ' required' : ''}" title="${escapeMcpText(parameter.description)}">${escapeMcpText(parameter.name)}</span>`
         ).join('');
@@ -1324,10 +1325,29 @@ function renderMcpTools() {
                 <strong class="mcp-tool-name">${escapeMcpText(tool.name)}</strong>
                 <p>${escapeMcpText(tool.description)}</p>
                 <div class="mcp-tool-params">${parameters || '<span class="mcp-param">无参数</span>'}</div>
-                <div class="mcp-tool-detail">${escapeMcpText(detail)}</div>
+                <div class="mcp-tool-footer"><div class="mcp-tool-detail">${escapeMcpText(detail)}</div><button class="mcp-tool-toggle${disabled ? '' : ' active'}" type="button" role="switch" aria-checked="${disabled ? 'false' : 'true'}" data-mcp-toggle="${escapeMcpText(tool.name)}" title="${disabled ? '启用工具' : '停用工具'}"><i></i><span>${disabled ? '停用' : '启用'}</span></button></div>
             </article>`;
     }).join('');
 }
+
+el.mcpToolsGrid?.addEventListener('click', async event => {
+    const toggle = event.target.closest('[data-mcp-toggle]');
+    if (!toggle) return;
+    const name = toggle.dataset.mcpToggle;
+    const tool = mcpTools.find(item => item.name === name);
+    if (!tool) return;
+    toggle.disabled = true;
+    try {
+        await invoke('set_mcp_tool_enabled', { name, enabled: tool.enabled === false });
+        tool.enabled = tool.enabled === false;
+        mcpAvailability.delete(name);
+        renderMcpTools();
+        showToast(`${name} 已${tool.enabled ? '启用' : '停用'}`, 'ok');
+    } catch (error) {
+        toggle.disabled = false;
+        showToast(`更新 ${name} 失败：${String(error)}`, 'err');
+    }
+});
 
 async function loadMcpTools() {
     if (!el.mcpToolsGrid) return;
@@ -1343,6 +1363,14 @@ async function loadMcpTools() {
         $('mcp-catalog-source').title = result.source || '';
         $('mcp-backend-current').textContent = result.backend?.selected || backend;
         $('mcp-backend-detail').textContent = `${result.backend?.ready ? '已就绪' : '待配置'} · ${result.backend?.detail || '--'}`;
+        const commandToggle = $('mcp-command-toggle');
+        if (commandToggle) {
+            const allowed = result.defaults?.allow_command_tools === true;
+            commandToggle.classList.toggle('active', allowed);
+            commandToggle.setAttribute('aria-checked', String(allowed));
+            commandToggle.querySelector('span').textContent = `高权限命令：${allowed ? '开启' : '关闭'}`;
+            commandToggle.title = allowed ? '关闭高权限命令工具' : '开启高权限命令工具';
+        }
         $('mcp-available-total').textContent = '--';
         $('mcp-command').textContent = `julong-codex mcp serve --backend ${backend}`;
         renderMcpCategories(result.categories || {});
@@ -1353,6 +1381,21 @@ async function loadMcpTools() {
         showToast(`MCP 目录加载失败：${String(error)}`, 'err');
     }
 }
+
+$('mcp-command-toggle')?.addEventListener('click', async event => {
+    const button = event.currentTarget;
+    const enabled = button.getAttribute('aria-checked') !== 'true';
+    button.disabled = true;
+    try {
+        await invoke('set_mcp_command_tools_enabled', { enabled });
+        await loadMcpTools();
+        showToast(`高权限命令工具已${enabled ? '开启' : '关闭'}`, 'ok');
+    } catch (error) {
+        showToast(`更新高权限开关失败：${String(error)}`, 'err');
+    } finally {
+        button.disabled = false;
+    }
+});
 
 $('btn-mcp-check')?.addEventListener('click', async event => {
     const button = event.currentTarget;

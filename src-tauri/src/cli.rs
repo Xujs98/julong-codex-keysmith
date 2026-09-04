@@ -53,6 +53,10 @@ fn print_help() {
     println!("  julong-codex mcp list [BACKEND_OPTIONS]");
     println!("  julong-codex mcp doctor [BACKEND_OPTIONS]");
     println!("  julong-codex mcp export");
+    println!("  julong-codex mcp enable TOOL");
+    println!("  julong-codex mcp disable TOOL");
+    println!("  julong-codex mcp allow-commands");
+    println!("  julong-codex mcp deny-commands");
     println!("  julong-codex mcp serve [BACKEND_OPTIONS]");
     println!("  julong-codex mcp call TOOL key=value ... [BACKEND_OPTIONS]");
     println!();
@@ -332,6 +336,57 @@ fn command_mcp(args: &[String]) -> i32 {
             match crate::mcp_tools::export_builtin_catalog(&path) {
                 Ok(()) => {
                     println!("[OK] {}", path.display());
+                    0
+                }
+                Err(error) => {
+                    eprintln!("[FAIL] {error}");
+                    1
+                }
+            }
+        }
+        "enable" | "disable" => {
+            let positional = positional_mcp_args(args, 1);
+            let Some(name) = positional.first() else {
+                eprintln!("用法: julong-codex mcp {} TOOL", action);
+                return 2;
+            };
+            let Some(home) = DeployManager::find_codex_home() else {
+                eprintln!("[FAIL] Codex 配置目录未找到");
+                return 1;
+            };
+            let path = home.join(USER_CATALOG_FILE);
+            match crate::mcp_tools::set_tool_enabled(&path, name, action == "enable") {
+                Ok(()) => {
+                    println!(
+                        "[OK] {} {}",
+                        if action == "enable" {
+                            "已启用"
+                        } else {
+                            "已停用"
+                        },
+                        name
+                    );
+                    0
+                }
+                Err(error) => {
+                    eprintln!("[FAIL] {error}");
+                    1
+                }
+            }
+        }
+        "allow-commands" | "deny-commands" => {
+            let Some(home) = DeployManager::find_codex_home() else {
+                eprintln!("[FAIL] Codex 配置目录未找到");
+                return 1;
+            };
+            let path = home.join(USER_CATALOG_FILE);
+            let enabled = action == "allow-commands";
+            match crate::mcp_tools::set_command_tools_enabled(&path, enabled) {
+                Ok(()) => {
+                    println!(
+                        "[OK] 高权限命令工具已{}",
+                        if enabled { "允许" } else { "禁止" }
+                    );
                     0
                 }
                 Err(error) => {

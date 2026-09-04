@@ -256,6 +256,8 @@ pub fn run() {
             get_provider_runtime_status,
             get_mcp_tools,
             check_mcp_tools,
+            set_mcp_tool_enabled,
+            set_mcp_command_tools_enabled,
             export_mcp_tools,
         ])
         .run(tauri::generate_context!())
@@ -821,6 +823,20 @@ async fn check_mcp_tools(
     tokio::task::spawn_blocking(move || runner.availability())
         .await
         .map_err(|e| format!("MCP 工具检查任务失败: {e}"))
+}
+
+#[tauri::command]
+fn set_mcp_tool_enabled(_app: tauri::AppHandle, name: String, enabled: bool) -> Result<(), String> {
+    let home = DeployManager::find_codex_home().ok_or("Codex home not found")?;
+    let path = home.join(crate::mcp_tools::USER_CATALOG_FILE);
+    crate::mcp_tools::set_tool_enabled(&path, &name, enabled)
+}
+
+#[tauri::command]
+fn set_mcp_command_tools_enabled(_app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    let home = DeployManager::find_codex_home().ok_or("Codex home not found")?;
+    let path = home.join(crate::mcp_tools::USER_CATALOG_FILE);
+    crate::mcp_tools::set_command_tools_enabled(&path, enabled)
 }
 
 #[tauri::command]
