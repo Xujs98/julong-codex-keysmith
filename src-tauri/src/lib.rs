@@ -228,6 +228,7 @@ pub fn run() {
             stop_proxy,
             deploy_bridge,
             restore_codex,
+            restore_clean_environment,
             get_stats,
             get_history,
             get_proxy_status,
@@ -641,6 +642,67 @@ async fn restore_codex() -> Result<String, String> {
         Err(e) => tracing::error!("restore_codex: failed: {}", e),
     }
     result
+}
+
+/// 停止桌面/CLI 托管代理并恢复 Codex 的干净环境。
+/// 该命令供供应商页使用，统一处理运行时、配置、认证和部署文件，避免
+/// 只恢复文件而留下 8080 代理或本地 relay_url.txt 的半残状态。
+#[tauri::command]
+async fn restore_clean_environment(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+    tracing::info!("restore_clean_environment: stopping proxy and restoring files");
+    let manager = DeployManager::new().ok_or("Codex home not found")?;
+
+    let handle = state.proxy_handle.write().await.take();
+    let had_local_proxy = handle.is_some();
+    if let Some(handle) = handle {
+        handle.abort();
+    }
+    *state.core.write().await = None;
+    *state.monitor.write().await = None;
+    *state.memory.write().await = None;
+    if let Some(activity) = state.activity.write().await.take() {
+        activity.reset();
+    }
+    *state.providers.write().await = None;
+
+    let mut managed_proxy_stopped = false;
+    match runtime::terminate_managed_proxy(manager.codex_home()) {
+        Ok(true) => {
+            managed_proxy_stopped = true;
+        }
+        Ok(false) => {}
+        Err(error) => {
+            tracing::warn!("restore_clean_environment: managed process cleanup failed: {error}")
+        }
+    }
+
+    if (had_local_proxy || managed_proxy_stopped)
+        && !runtime::wait_for_port(false, std::time::Duration::from_secs(5))
+    {
+        return Err("代理端口仍在监听，已保留 Codex 配置未执行清理".into());
+    }
+
+    let message = manager.restore_clean()?;
+    let _ = app.emit("proxy-status", "stopped");
+    let _ = app.emit(
+        "interaction",
+        InteractionEvent {
+            id: 0,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            category: "system".into(),
+            user_preview: "还原干净环境".into(),
+            ai_preview: message.clone(),
+            thinking_preview: String::new(),
+            tampered: false,
+            bytes: 0,
+            duration_ms: 0,
+        },
+    );
+    tracing::info!("restore_clean_environment: {}", message);
+    Ok(message)
 }
 
 #[tauri::command]

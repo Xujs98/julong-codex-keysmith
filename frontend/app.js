@@ -59,8 +59,14 @@ const el = {
     providersList: $('providers-list'),
     providerCount: $('nav-provider-count'),
     providerRuntime: $('provider-runtime'),
+    btnRestoreClean: $('btn-restore-clean'),
     mcpCount:      $('nav-mcp-count'),
     mcpBackend:    $('mcp-backend'),
+    mcpBackendPicker: $('mcp-backend-picker'),
+    mcpBackendTrigger: $('mcp-backend-trigger'),
+    mcpBackendGlyph: $('mcp-backend-glyph'),
+    mcpBackendValue: $('mcp-backend-value'),
+    mcpBackendMenu: $('mcp-backend-menu'),
     mcpToolsGrid:  $('mcp-tools-grid'),
 };
 
@@ -875,6 +881,8 @@ let pendingDeleteProviderId = null;
 let providerDeleteBusy = false;
 let providerModalPreviousFocus = null;
 let providerDeletePreviousFocus = null;
+let providerRestoreBusy = false;
+let providerRestorePreviousFocus = null;
 
 function providerIcon(name) {
     const icons = {
@@ -1040,6 +1048,52 @@ function closeProviderDeleteModal() {
     providerDeletePreviousFocus = null;
 }
 
+function openProviderRestoreModal() {
+    if (providerRestoreBusy) return;
+    providerRestorePreviousFocus = document.activeElement;
+    $('provider-restore-modal').style.display = 'flex';
+    document.body.classList.add('modal-open');
+    requestAnimationFrame(() => $('provider-restore-cancel')?.focus());
+}
+
+function closeProviderRestoreModal() {
+    if (providerRestoreBusy) return;
+    const modal = $('provider-restore-modal');
+    if (!modal) return;
+    modal.style.display = 'none';
+    document.body.classList.remove('modal-open');
+    providerRestorePreviousFocus?.focus?.();
+    providerRestorePreviousFocus = null;
+}
+
+async function confirmProviderRestore() {
+    if (providerRestoreBusy) return;
+    const button = $('provider-restore-confirm');
+    providerRestoreBusy = true;
+    if (button) {
+        button.disabled = true;
+        button.textContent = '还原中…';
+    }
+    try {
+        const msg = await invoke('restore_clean_environment');
+        if ($('provider-restore-modal')) $('provider-restore-modal').style.display = 'none';
+        document.body.classList.remove('modal-open');
+        await Promise.all([refreshCodexInfo(), refreshHealth(), loadProviders()]);
+        await updateCurrentProviderLabels();
+        showToast(msg, 'ok');
+    } catch (e) {
+        showToast(`还原失败：${String(e)}`, 'err');
+    } finally {
+        providerRestoreBusy = false;
+        if (button) {
+            button.disabled = false;
+            button.textContent = '确认还原';
+        }
+        providerRestorePreviousFocus?.focus?.();
+        providerRestorePreviousFocus = null;
+    }
+}
+
 async function confirmProviderDelete() {
     if (!pendingDeleteProviderId || providerDeleteBusy) return;
     const id = pendingDeleteProviderId;
@@ -1073,6 +1127,7 @@ async function updateProviderRuntime() {
 }
 
 $('btn-add-provider')?.addEventListener('click', () => openProviderModal());
+$('btn-restore-clean')?.addEventListener('click', openProviderRestoreModal);
 $('provider-modal-cancel')?.addEventListener('click', closeProviderModal);
 $('provider-modal-close')?.addEventListener('click', closeProviderModal);
 $('provider-modal')?.addEventListener('click', e => { if (e.target === e.currentTarget) closeProviderModal(); });
@@ -1094,6 +1149,10 @@ $('provider-delete-cancel')?.addEventListener('click', closeProviderDeleteModal)
 $('provider-delete-confirm')?.addEventListener('click', confirmProviderDelete);
 $('provider-delete-modal')?.addEventListener('click', e => { if (e.target === e.currentTarget) closeProviderDeleteModal(); });
 $('provider-delete-modal')?.addEventListener('keydown', e => { if (e.key === 'Escape') closeProviderDeleteModal(); });
+$('provider-restore-cancel')?.addEventListener('click', closeProviderRestoreModal);
+$('provider-restore-confirm')?.addEventListener('click', confirmProviderRestore);
+$('provider-restore-modal')?.addEventListener('click', e => { if (e.target === e.currentTarget) closeProviderRestoreModal(); });
+$('provider-restore-modal')?.addEventListener('keydown', e => { if (e.key === 'Escape') closeProviderRestoreModal(); });
 $('provider-modal-save')?.addEventListener('click', async () => { try { const p = providerForm(); if (!p.name || !p.request_url) throw new Error('请填写供应商名称和 API 请求地址'); providerItems = await invoke('save_provider', { provider: p }); closeProviderModal(); renderProviders(); showToast('供应商已保存', 'ok'); } catch (e) { $('provider-modal-message').textContent = String(e); } });
 $('btn-provider-models')?.addEventListener('click', async () => { const p = providerForm(); const btn = $('btn-provider-models'); try { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.classList.add('loading'); btn.querySelector('b').textContent = '下载中…'; const models = await invoke('fetch_provider_models', { provider: p }); populateModelPicker(models, $('provider-default-model').value.trim()); showToast(`已获取 ${models.length} 个模型`, 'ok'); } catch (e) { $('provider-modal-message').textContent = `模型获取失败：${e}`; } finally { btn.disabled = false; btn.removeAttribute('aria-busy'); btn.classList.remove('loading'); btn.querySelector('b').textContent = '下载模型'; } });
 
@@ -1113,6 +1172,98 @@ function escapeMcpText(value) {
 function selectedMcpBackend() {
     return el.mcpBackend?.value || 'auto';
 }
+
+const MCP_BACKEND_OPTIONS = Object.freeze({
+    auto:   { label: '自动检测', glyph: '✦' },
+    local:  { label: '本机', glyph: '⌂' },
+    wsl:    { label: 'WSL', glyph: '⌘' },
+    docker: { label: 'Docker', glyph: '▣' },
+    ssh:    { label: 'SSH', glyph: '↗' },
+});
+
+function normalizeMcpBackend(value) {
+    return Object.prototype.hasOwnProperty.call(MCP_BACKEND_OPTIONS, value) ? value : 'auto';
+}
+
+function syncMcpBackendPicker(value) {
+    const backend = normalizeMcpBackend(value);
+    const info = MCP_BACKEND_OPTIONS[backend];
+    if (el.mcpBackend) el.mcpBackend.value = backend;
+    if (el.mcpBackendGlyph) el.mcpBackendGlyph.textContent = info.glyph;
+    if (el.mcpBackendValue) el.mcpBackendValue.textContent = info.label;
+    el.mcpBackendMenu?.querySelectorAll('.mcp-backend-option').forEach(option => {
+        const selected = option.dataset.backend === backend;
+        option.classList.toggle('selected', selected);
+        option.setAttribute('aria-selected', String(selected));
+        option.tabIndex = selected ? 0 : -1;
+    });
+    return backend;
+}
+
+function closeMcpBackendPicker({ restoreFocus = false } = {}) {
+    if (!el.mcpBackendMenu || !el.mcpBackendPicker) return;
+    el.mcpBackendMenu.hidden = true;
+    el.mcpBackendPicker.classList.remove('open');
+    el.mcpBackendTrigger?.setAttribute('aria-expanded', 'false');
+    if (restoreFocus) el.mcpBackendTrigger?.focus();
+}
+
+function openMcpBackendPicker() {
+    if (!el.mcpBackendMenu || !el.mcpBackendPicker) return;
+    el.mcpBackendMenu.hidden = false;
+    el.mcpBackendPicker.classList.add('open');
+    el.mcpBackendTrigger?.setAttribute('aria-expanded', 'true');
+    const selected = el.mcpBackendMenu.querySelector('.mcp-backend-option.selected');
+    requestAnimationFrame(() => selected?.focus());
+}
+
+function selectMcpBackend(value) {
+    const previous = selectedMcpBackend();
+    const backend = syncMcpBackendPicker(value);
+    const changed = previous !== backend;
+    localStorage.setItem(MCP_BACKEND_KEY, backend);
+    closeMcpBackendPicker({ restoreFocus: true });
+    if (changed) loadMcpTools();
+}
+
+function setupMcpBackendPicker() {
+    if (!el.mcpBackendPicker || !el.mcpBackendTrigger || !el.mcpBackendMenu) return;
+    syncMcpBackendPicker(selectedMcpBackend());
+    el.mcpBackendTrigger.addEventListener('click', () => {
+        if (el.mcpBackendMenu.hidden) openMcpBackendPicker();
+        else closeMcpBackendPicker({ restoreFocus: true });
+    });
+    el.mcpBackendTrigger.addEventListener('keydown', event => {
+        if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            openMcpBackendPicker();
+        } else if (event.key === 'Escape') {
+            closeMcpBackendPicker();
+        }
+    });
+    el.mcpBackendMenu.querySelectorAll('.mcp-backend-option').forEach(option => {
+        option.addEventListener('click', () => selectMcpBackend(option.dataset.backend));
+        option.addEventListener('keydown', event => {
+            const options = [...el.mcpBackendMenu.querySelectorAll('.mcp-backend-option')];
+            const index = options.indexOf(option);
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault();
+                options[(index + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length].focus();
+            } else if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                selectMcpBackend(option.dataset.backend);
+            } else if (event.key === 'Escape') {
+                event.preventDefault();
+                closeMcpBackendPicker({ restoreFocus: true });
+            }
+        });
+    });
+    document.addEventListener('click', event => {
+        if (!el.mcpBackendPicker.contains(event.target)) closeMcpBackendPicker();
+    });
+}
+
+setupMcpBackendPicker();
 
 function renderMcpCategories(categories = {}) {
     const row = $('mcp-categories');
@@ -1182,11 +1333,6 @@ async function loadMcpTools() {
         showToast(`MCP 目录加载失败：${String(error)}`, 'err');
     }
 }
-
-el.mcpBackend?.addEventListener('change', () => {
-    localStorage.setItem(MCP_BACKEND_KEY, selectedMcpBackend());
-    loadMcpTools();
-});
 
 $('btn-mcp-check')?.addEventListener('click', async event => {
     const button = event.currentTarget;
@@ -1329,9 +1475,7 @@ async function init() {
     let activityStatus = null;
 
     const savedMcpBackend = localStorage.getItem(MCP_BACKEND_KEY) || 'auto';
-    if (el.mcpBackend && Array.from(el.mcpBackend.options).some(option => option.value === savedMcpBackend)) {
-        el.mcpBackend.value = savedMcpBackend;
-    }
+    syncMcpBackendPicker(savedMcpBackend);
 
     // 检查代理状态
     try {

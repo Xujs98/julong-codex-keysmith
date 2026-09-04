@@ -162,14 +162,39 @@
         </div>
         <div class="main-head" id="head-providers" style="display:none;">
             <div><span class="main-title">供应商</span><span class="head-subtitle">多中转优先级与自动切换</span></div>
-            <div class="main-actions"><button class="btn btn-red solid" id="btn-add-provider">添加供应商</button></div>
+            <div class="main-actions">
+                <button class="btn btn-red" id="btn-restore-clean" type="button">还原</button>
+                <button class="btn btn-red solid" id="btn-add-provider">添加供应商</button>
+            </div>
         </div>
         <div class="main-head" id="head-mcp" style="display:none;">
             <div><span class="main-title">MCP 工具</span><span class="head-subtitle">配置驱动的本地 / WSL / Docker / SSH 工具后端</span></div>
             <div class="main-actions">
-                <select class="mcp-backend-select" id="mcp-backend" aria-label="MCP 执行后端">
-                    <option value="auto">自动检测</option><option value="local">本机</option><option value="wsl">WSL</option><option value="docker">Docker</option><option value="ssh">SSH</option>
-                </select>
+                <div class="mcp-backend-picker" id="mcp-backend-picker">
+                    <input type="hidden" id="mcp-backend" value="auto">
+                    <button class="mcp-backend-trigger" id="mcp-backend-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="mcp-backend-menu">
+                        <span class="mcp-backend-glyph" id="mcp-backend-glyph" aria-hidden="true">✦</span>
+                        <span class="mcp-backend-value" id="mcp-backend-value">自动检测</span>
+                        <span class="mcp-backend-chevron" aria-hidden="true">⌄</span>
+                    </button>
+                    <div class="mcp-backend-menu" id="mcp-backend-menu" role="listbox" aria-label="MCP 执行后端" hidden>
+                        <button class="mcp-backend-option selected" type="button" role="option" aria-selected="true" data-backend="auto">
+                            <span class="mcp-option-glyph">✦</span><span><strong>自动检测</strong><small>按当前环境自动选择</small></span><span class="mcp-option-check">✓</span>
+                        </button>
+                        <button class="mcp-backend-option" type="button" role="option" aria-selected="false" data-backend="local">
+                            <span class="mcp-option-glyph">⌂</span><span><strong>本机</strong><small>使用当前 macOS / Windows</small></span><span class="mcp-option-check">✓</span>
+                        </button>
+                        <button class="mcp-backend-option" type="button" role="option" aria-selected="false" data-backend="wsl">
+                            <span class="mcp-option-glyph">⌘</span><span><strong>WSL</strong><small>通过 Windows Linux 子系统</small></span><span class="mcp-option-check">✓</span>
+                        </button>
+                        <button class="mcp-backend-option" type="button" role="option" aria-selected="false" data-backend="docker">
+                            <span class="mcp-option-glyph">▣</span><span><strong>Docker</strong><small>使用本地容器工具链</small></span><span class="mcp-option-check">✓</span>
+                        </button>
+                        <button class="mcp-backend-option" type="button" role="option" aria-selected="false" data-backend="ssh">
+                            <span class="mcp-option-glyph">↗</span><span><strong>SSH</strong><small>连接远程工具主机</small></span><span class="mcp-option-check">✓</span>
+                        </button>
+                    </div>
+                </div>
                 <button class="btn" id="btn-mcp-export">导出配置</button>
                 <button class="btn btn-red solid" id="btn-mcp-check">检查工具</button>
             </div>
@@ -335,7 +360,7 @@
                     <div class="overview-card"><div class="overview-label">本机可用</div><div class="overview-value" id="mcp-available-total">--</div><div class="overview-meta">检查结果不会自动安装工具</div></div>
                 </section>
                 <section class="mcp-guide">
-                    <div><strong>Codex MCP 接入</strong><span>CLI 通过 stdio 暴露工具；任意 Shell、Python、PowerShell 命令工具默认关闭。</span></div>
+                    <div><strong>Codex MCP 接入</strong><span>CLI 通过 stdio 暴露工具；“未就绪”表示当前后端找不到对应命令，不会自动安装工具。</span></div>
                     <code id="mcp-command">julong-codex mcp serve --backend auto</code>
                 </section>
                 <div class="mcp-category-row" id="mcp-categories"></div>
@@ -410,6 +435,25 @@
         <div class="provider-delete-actions">
             <button class="btn" id="provider-delete-cancel" type="button">取消</button>
             <button class="btn provider-delete-confirm" id="provider-delete-confirm" type="button">确认删除</button>
+        </div>
+    </div>
+</div>
+
+<div class="provider-restore-modal" id="provider-restore-modal" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="provider-restore-title" aria-describedby="provider-restore-description">
+    <div class="provider-restore-card">
+        <div class="provider-restore-icon" aria-hidden="true">↺</div>
+        <div class="modal-eyebrow">CLEAN CODEX ENVIRONMENT</div>
+        <h2 id="provider-restore-title">还原 Codex 环境？</h2>
+        <p id="provider-restore-description">这会停止当前代理，并撤销本应用写入的本地配置，让 Codex 回到部署前状态。</p>
+        <ul class="provider-restore-list">
+            <li>恢复 config.toml 与应用改写前的 auth.json</li>
+            <li>移除 bridge.md、relay_url.txt 与已部署清单</li>
+            <li>清理本次部署的 Skills，保留用户原有文件</li>
+        </ul>
+        <div class="provider-restore-notice"><span></span>供应商列表仅保留在应用中，不会删除</div>
+        <div class="provider-restore-actions">
+            <button class="btn" id="provider-restore-cancel" type="button">取消</button>
+            <button class="btn btn-red solid" id="provider-restore-confirm" type="button">确认还原</button>
         </div>
     </div>
 </div>

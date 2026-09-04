@@ -18,7 +18,11 @@ pub(crate) const SKILLS_MANIFEST: &str = "super-instruct-skills-deployed.json";
 pub(crate) const SKILLS_BACKUP_DIR: &str = "super-instruct-skills-backup";
 /// Skills 管理页即时同步使用的独立清单。代理停止时必须保留这些 Skill。
 const LIVE_SKILLS_MANIFEST: &str = "super-instruct-skills-live.json";
-const DEPLOYMENT_MANIFEST: &str = ".super-instruct-manifest.json";
+pub(crate) const DEPLOYMENT_MANIFEST: &str = ".super-instruct-manifest.json";
+/// 供应商模块首次改写 auth.json 前保存的原始快照。
+pub(crate) const AUTH_BACKUP_FILE: &str = "auth.json.julong-providers-bak";
+/// 供应商在代理未运行时首次改写 config.toml 前保存的原始快照。
+pub(crate) const PROVIDER_CONFIG_BACKUP_FILE: &str = "config.toml.julong-providers-bak";
 
 #[derive(Clone, Serialize)]
 pub struct DeployStatus {
@@ -332,6 +336,15 @@ impl DeployManager {
 
     /// 从备份恢复 Codex 配置
     pub fn restore(&self) -> Result<String, String> {
+        self.restore_inner(false)
+    }
+
+    /// 恢复 Codex 干净环境，并删除仅由本项目生成的中转站元数据。
+    pub fn restore_clean(&self) -> Result<String, String> {
+        self.restore_inner(true)
+    }
+
+    fn restore_inner(&self, clean: bool) -> Result<String, String> {
         self.recover_pending()?;
         let mut affected_skills = read_skills_manifest(&self.codex_home.join(SKILLS_MANIFEST));
         let live_skills = read_skills_manifest(&self.codex_home.join(LIVE_SKILLS_MANIFEST));
@@ -347,22 +360,55 @@ impl DeployManager {
         let result = (|| -> Result<String, String> {
             let cfg = self.codex_home.join("config.toml");
             let bak = self.codex_home.join("config.toml.super-instruct-bak");
+            let provider_bak = self.codex_home.join(PROVIDER_CONFIG_BACKUP_FILE);
 
             tracing::info!("restore: codex_home = {}", self.codex_home.display());
 
-            if bak.exists() {
+            let config_restored = if clean && provider_bak.exists() {
+                fs::copy(&provider_bak, &cfg)
+                    .map_err(|e| format!("restore provider config failed: {e}"))?;
+                fs::remove_file(&provider_bak)
+                    .map_err(|e| format!("remove provider config backup failed: {e}"))?;
+                if bak.exists() {
+                    fs::remove_file(&bak)
+                        .map_err(|e| format!("remove config backup failed: {e}"))?;
+                }
+                tracing::info!("restore: config.toml restored from provider backup");
+                true
+            } else if bak.exists() {
                 fs::copy(&bak, &cfg).map_err(|e| format!("restore config failed: {}", e))?;
                 fs::remove_file(&bak).map_err(|e| format!("remove backup failed: {}", e))?;
-                tracing::info!("restore: config.toml restored from backup");
+                tracing::info!("restore: config.toml restored from deployment backup");
+                true
+            } else if provider_bak.exists() {
+                fs::copy(&provider_bak, &cfg)
+                    .map_err(|e| format!("restore provider config failed: {e}"))?;
+                fs::remove_file(&provider_bak)
+                    .map_err(|e| format!("remove provider config backup failed: {e}"))?;
+                if bak.exists() {
+                    fs::remove_file(&bak)
+                        .map_err(|e| format!("remove config backup failed: {e}"))?;
+                }
+                tracing::info!("restore: config.toml restored from provider backup");
+                true
             } else {
                 tracing::warn!("restore: no backup found, config.toml unchanged");
+                false
+            };
+
+            let auth_restored = restore_auth(&self.codex_home)?;
+            if auth_restored {
+                tracing::info!("restore: auth.json restored from provider backup");
             }
 
             let bridge = self.codex_home.join("bridge.md");
-            if bridge.exists() {
-                let _ = fs::remove_file(&bridge);
+            let bridge_removed = if bridge.exists() {
+                fs::remove_file(&bridge).map_err(|e| format!("remove bridge.md failed: {e}"))?;
                 tracing::info!("restore: bridge.md removed");
-            }
+                true
+            } else {
+                false
+            };
 
             // 反向 skill 部署：只移除本项目部署的 id，还原用户同名备份；保留用户其他自定义 skill
             let skills = self.codex_home.join("skills");
@@ -407,7 +453,44 @@ impl DeployManager {
                     .map_err(|e| format!("remove deployment manifest failed: {e}"))?;
             }
 
-            Ok("Codex config restored".to_string())
+            let relay_removed = if clean {
+                let relay_file = self.codex_home.join("relay_url.txt");
+                if relay_file.exists() {
+                    fs::remove_file(&relay_file)
+                        .map_err(|e| format!("remove relay_url.txt failed: {e}"))?;
+                    tracing::info!("restore: relay_url.txt removed");
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if clean {
+                Ok(format!(
+                    "Codex clean environment restored (config: {}, auth: {}, bridge.md: {}, relay_url.txt: {})",
+                    if config_restored { "restored" } else { "unchanged" },
+                    if auth_restored { "restored" } else { "unchanged" },
+                    if bridge_removed { "removed" } else { "absent" },
+                    if relay_removed { "removed" } else { "absent" },
+                ))
+            } else {
+                Ok(format!(
+                    "Codex config restored (config: {}, auth: {}, bridge.md: {})",
+                    if config_restored {
+                        "restored"
+                    } else {
+                        "unchanged"
+                    },
+                    if auth_restored {
+                        "restored"
+                    } else {
+                        "unchanged"
+                    },
+                    if bridge_removed { "removed" } else { "absent" },
+                ))
+            }
         })();
 
         match result {
@@ -451,6 +534,7 @@ impl DeployManager {
         let bridge = self.codex_home.join("bridge.md");
         let skills = self.codex_home.join("skills");
         let bak = self.codex_home.join("config.toml.super-instruct-bak");
+        let provider_bak = self.codex_home.join(PROVIDER_CONFIG_BACKUP_FILE);
         let relay_file = self.codex_home.join("relay_url.txt");
         let deployment_manifest_path = self.codex_home.join(DEPLOYMENT_MANIFEST);
         let transaction_pending = self.has_pending_transaction();
@@ -494,7 +578,7 @@ impl DeployManager {
             } else {
                 0
             },
-            config_backed_up: bak.exists(),
+            config_backed_up: bak.exists() || provider_bak.exists(),
             relay_url_valid,
             codex_home_found: true,
             deployment_state,
@@ -688,6 +772,9 @@ fn transaction_paths(skill_ids: &BTreeSet<String>) -> Vec<PathBuf> {
     let mut paths = vec![
         PathBuf::from("config.toml"),
         PathBuf::from("config.toml.super-instruct-bak"),
+        PathBuf::from(PROVIDER_CONFIG_BACKUP_FILE),
+        PathBuf::from("auth.json"),
+        PathBuf::from(AUTH_BACKUP_FILE),
         PathBuf::from("relay_url.txt"),
         PathBuf::from("bridge.md"),
         PathBuf::from(SKILLS_MANIFEST),
@@ -696,6 +783,50 @@ fn transaction_paths(skill_ids: &BTreeSet<String>) -> Vec<PathBuf> {
     ];
     paths.extend(skill_ids.iter().map(|id| PathBuf::from("skills").join(id)));
     paths
+}
+
+/// 在供应商首次改写 API Key 前保存 auth.json 原始内容。
+/// 已有备份时保持不变，避免连续切换供应商污染可恢复快照。
+pub(crate) fn backup_auth_if_needed(home: &Path) -> Result<bool, String> {
+    let auth = home.join("auth.json");
+    let backup = home.join(AUTH_BACKUP_FILE);
+    if !auth.exists() || backup.exists() {
+        return Ok(false);
+    }
+    fs::copy(&auth, &backup).map_err(|e| format!("backup auth.json failed: {e}"))?;
+    tracing::info!("provider: backed up auth.json -> {}", backup.display());
+    Ok(true)
+}
+
+/// 在供应商未运行代理时首次改写 config.toml 前保存原始内容。
+/// 部署事务已有更高优先级的 config.toml.super-instruct-bak 时不重复保存。
+pub(crate) fn backup_provider_config_if_needed(home: &Path) -> Result<bool, String> {
+    let config = home.join("config.toml");
+    let backup = home.join(PROVIDER_CONFIG_BACKUP_FILE);
+    let deployment_backup = home.join("config.toml.super-instruct-bak");
+    if !config.exists() || backup.exists() || deployment_backup.exists() {
+        return Ok(false);
+    }
+    let content = fs::read_to_string(&config)
+        .map_err(|e| format!("read config before provider update failed: {e}"))?;
+    if content.contains("127.0.0.1:8080") {
+        return Ok(false);
+    }
+    fs::copy(&config, &backup).map_err(|e| format!("backup provider config failed: {e}"))?;
+    tracing::info!("provider: backed up config.toml -> {}", backup.display());
+    Ok(true)
+}
+
+/// 恢复供应商改写前的 auth.json；没有项目备份时保持现有认证文件不变。
+pub(crate) fn restore_auth(home: &Path) -> Result<bool, String> {
+    let backup = home.join(AUTH_BACKUP_FILE);
+    if !backup.exists() {
+        return Ok(false);
+    }
+    let auth = home.join("auth.json");
+    fs::copy(&backup, &auth).map_err(|e| format!("restore auth.json failed: {e}"))?;
+    fs::remove_file(&backup).map_err(|e| format!("remove auth backup failed: {e}"))?;
+    Ok(true)
 }
 
 fn rollback_error(transaction: FileTransaction, error: String) -> Result<String, String> {
@@ -809,6 +940,125 @@ mod tests {
         .unwrap();
         assert!(!manager.refresh_config_integrity().unwrap());
         assert!(!manager.status().integrity_ok);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn auth_backup_is_created_once_and_restored() {
+        let root = std::env::temp_dir().join(format!(
+            "julong-auth-backup-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let auth = root.join("auth.json");
+        fs::write(&auth, r#"{"OPENAI_API_KEY":"original","other":true}"#).unwrap();
+
+        assert!(backup_auth_if_needed(&root).unwrap());
+        fs::write(&auth, r#"{"OPENAI_API_KEY":"changed"}"#).unwrap();
+        assert!(!backup_auth_if_needed(&root).unwrap());
+        assert!(restore_auth(&root).unwrap());
+        assert_eq!(
+            fs::read_to_string(&auth).unwrap(),
+            r#"{"OPENAI_API_KEY":"original","other":true}"#
+        );
+        assert!(!root.join(AUTH_BACKUP_FILE).exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn provider_config_backup_is_created_once_and_restored() {
+        let root = std::env::temp_dir().join(format!(
+            "julong-provider-config-backup-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let config = root.join("config.toml");
+        fs::write(&config, "model = \"original\"\n").unwrap();
+        assert!(backup_provider_config_if_needed(&root).unwrap());
+        fs::write(&config, "model = \"changed\"\n").unwrap();
+        assert!(!backup_provider_config_if_needed(&root).unwrap());
+
+        let manager = DeployManager {
+            codex_home: root.clone(),
+        };
+        manager.restore_clean().unwrap();
+        assert_eq!(
+            fs::read_to_string(&config).unwrap(),
+            "model = \"original\"\n"
+        );
+        assert!(!root.join(PROVIDER_CONFIG_BACKUP_FILE).exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn normal_restore_keeps_provider_snapshot_for_explicit_clean_restore() {
+        let root = std::env::temp_dir().join(format!(
+            "julong-provider-restore-order-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("config.toml"), "model = \"proxy\"\n").unwrap();
+        fs::write(
+            root.join("config.toml.super-instruct-bak"),
+            "model = \"provider\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join(PROVIDER_CONFIG_BACKUP_FILE),
+            "model = \"original\"\n",
+        )
+        .unwrap();
+        let manager = DeployManager {
+            codex_home: root.clone(),
+        };
+
+        manager.restore().unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("config.toml")).unwrap(),
+            "model = \"provider\"\n"
+        );
+        assert!(root.join(PROVIDER_CONFIG_BACKUP_FILE).exists());
+
+        manager.restore_clean().unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("config.toml")).unwrap(),
+            "model = \"original\"\n"
+        );
+        assert!(!root.join(PROVIDER_CONFIG_BACKUP_FILE).exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn restore_keeps_auth_without_project_backup_and_cleans_deployment_files() {
+        let root = std::env::temp_dir().join(format!(
+            "julong-clean-restore-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(root.join("skills")).unwrap();
+        fs::write(root.join("auth.json"), r#"{"OPENAI_API_KEY":"user"}"#).unwrap();
+        fs::write(root.join("config.toml"), "model = \"patched\"\n").unwrap();
+        fs::write(
+            root.join("config.toml.super-instruct-bak"),
+            "model = \"original\"\n",
+        )
+        .unwrap();
+        fs::write(root.join("bridge.md"), "managed").unwrap();
+        fs::write(root.join("relay_url.txt"), "https://relay.example").unwrap();
+        let manager = DeployManager {
+            codex_home: root.clone(),
+        };
+
+        manager.restore_clean().unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("config.toml")).unwrap(),
+            "model = \"original\"\n"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("auth.json")).unwrap(),
+            r#"{"OPENAI_API_KEY":"user"}"#
+        );
+        assert!(!root.join("bridge.md").exists());
+        assert!(!root.join("relay_url.txt").exists());
         fs::remove_dir_all(root).unwrap();
     }
 }

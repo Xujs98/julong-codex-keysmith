@@ -1,5 +1,9 @@
 //! 供应商管理：持久化多供应商列表，并同步 Codex config.toml/auth.json。
-use crate::deploy::{find_relay_url, DeployManager};
+use crate::deploy::{
+    backup_auth_if_needed, backup_provider_config_if_needed, find_relay_url, DeployManager,
+    AUTH_BACKUP_FILE, DEPLOYMENT_MANIFEST, PROVIDER_CONFIG_BACKUP_FILE,
+};
+use crate::transaction::FileTransaction;
 use chrono::Utc;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -166,16 +170,38 @@ fn read_model(home: &Path) -> Option<String> {
 pub fn activate(provider: &Provider, proxy_active: bool) -> Result<String, String> {
     let home = DeployManager::find_codex_home().ok_or("Codex home not found")?;
     let url = provider.normalized_url();
-    let relay = home.join("relay_url.txt");
-    atomic_write(&relay, url.as_bytes())?;
+    let transaction = FileTransaction::begin(
+        &home,
+        "provider-activate",
+        &[
+            PathBuf::from("config.toml"),
+            PathBuf::from("config.toml.super-instruct-bak"),
+            PathBuf::from(PROVIDER_CONFIG_BACKUP_FILE),
+            PathBuf::from("auth.json"),
+            PathBuf::from(AUTH_BACKUP_FILE),
+            PathBuf::from("relay_url.txt"),
+            PathBuf::from(DEPLOYMENT_MANIFEST),
+        ],
+    )?;
 
-    let auth_path = home.join("auth.json");
-    if auth_path.exists() {
-        let text =
-            fs::read_to_string(&auth_path).map_err(|e| format!("read auth.json failed: {e}"))?;
-        let mut value: Value =
-            serde_json::from_str(&text).map_err(|e| format!("parse auth.json failed: {e}"))?;
-        if !provider.api_key.trim().is_empty() {
+    let result = (|| -> Result<String, String> {
+        let relay = home.join("relay_url.txt");
+        let auth_path = home.join("auth.json");
+        let cfg = home.join("config.toml");
+
+        if !provider.api_key.trim().is_empty() && auth_path.exists() {
+            backup_auth_if_needed(&home)?;
+        }
+        if !proxy_active && cfg.exists() {
+            backup_provider_config_if_needed(&home)?;
+        }
+        atomic_write(&relay, url.as_bytes())?;
+
+        if auth_path.exists() && !provider.api_key.trim().is_empty() {
+            let text = fs::read_to_string(&auth_path)
+                .map_err(|e| format!("read auth.json failed: {e}"))?;
+            let mut value: Value =
+                serde_json::from_str(&text).map_err(|e| format!("parse auth.json failed: {e}"))?;
             if let Some(obj) = value.as_object_mut() {
                 obj.insert(
                     "OPENAI_API_KEY".into(),
@@ -185,50 +211,61 @@ pub fn activate(provider: &Provider, proxy_active: bool) -> Result<String, Strin
             let out = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
             atomic_write(&auth_path, out.as_bytes())?;
         }
-    }
 
-    let cfg = home.join("config.toml");
-    if cfg.exists() {
-        let text = fs::read_to_string(&cfg).map_err(|e| format!("read config.toml failed: {e}"))?;
-        let mut out = text.clone();
-        out = replace_or_append(
-            &out,
-            r#"(?m)^\s*model\s*=\s*"[^"]*""#,
-            &format!(r#"model = "{}""#, provider.default_model),
-        );
-        if let Some(section) = out.find("[model_providers.custom]") {
-            let end = out[section..]
-                .find("\n[")
-                .map(|n| section + n)
-                .unwrap_or(out.len());
-            let head = &out[..section];
-            let body = &out[section..end];
-            let tail = &out[end..];
-            let body = replace_or_append(
-                body,
-                r#"(?m)^\s*name\s*=\s*"[^"]*""#,
-                &format!(r#"name = "{}""#, provider.name),
+        if cfg.exists() {
+            let text =
+                fs::read_to_string(&cfg).map_err(|e| format!("read config.toml failed: {e}"))?;
+            let mut out = text.clone();
+            out = replace_or_append(
+                &out,
+                r#"(?m)^\s*model\s*=\s*"[^"]*""#,
+                &format!(r#"model = "{}""#, provider.default_model),
             );
-            let base = if proxy_active {
-                "http://127.0.0.1:8080"
-            } else {
-                &url
-            };
-            let body = replace_or_append(
-                &body,
-                r#"(?m)^\s*base_url\s*=\s*"[^"]*""#,
-                &format!(r#"base_url = "{}""#, base),
-            );
-            out = format!("{}{}{}", head, body, tail);
-        }
-        atomic_write(&cfg, out.as_bytes())?;
-        if let Some(manager) = DeployManager::new() {
-            if let Err(error) = manager.refresh_config_integrity() {
-                tracing::warn!("refresh provider config integrity failed: {}", error);
+            if let Some(section) = out.find("[model_providers.custom]") {
+                let end = out[section..]
+                    .find("\n[")
+                    .map(|n| section + n)
+                    .unwrap_or(out.len());
+                let head = &out[..section];
+                let body = &out[section..end];
+                let tail = &out[end..];
+                let body = replace_or_append(
+                    body,
+                    r#"(?m)^\s*name\s*=\s*"[^"]*""#,
+                    &format!(r#"name = "{}""#, provider.name),
+                );
+                let base = if proxy_active {
+                    "http://127.0.0.1:8080"
+                } else {
+                    &url
+                };
+                let body = replace_or_append(
+                    &body,
+                    r#"(?m)^\s*base_url\s*=\s*"[^"]*""#,
+                    &format!(r#"base_url = "{}""#, base),
+                );
+                out = format!("{}{}{}", head, body, tail);
             }
+            atomic_write(&cfg, out.as_bytes())?;
         }
+        Ok(url)
+    })();
+
+    match result {
+        Ok(value) => {
+            transaction.commit()?;
+            if let Some(manager) = DeployManager::new() {
+                if let Err(error) = manager.refresh_config_integrity() {
+                    tracing::warn!("refresh provider config integrity failed: {}", error);
+                }
+            }
+            Ok(value)
+        }
+        Err(error) => match transaction.rollback() {
+            Ok(()) => Err(format!("{error}; 已回滚到操作前状态")),
+            Err(rollback) => Err(format!("{error}; 回滚失败: {rollback}")),
+        },
     }
-    Ok(url)
 }
 
 fn replace_or_append(text: &str, pattern: &str, replacement: &str) -> String {
