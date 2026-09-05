@@ -121,7 +121,17 @@ src-tauri/target/aarch64-apple-darwin/release/bundle/
 src-tauri/target/universal-apple-darwin/release/bundle/
 ```
 
-本地构建会生成 `.app` 和 `.dmg`。若要分发给其他用户，还需要 Apple Developer ID 证书签名并完成 notarization；未签名版本只能由用户在系统安全设置中手动放行。
+本地构建会生成 `.app` 和 `.dmg`。`build-macos.sh` 会自动查找 `Developer ID Application` 证书并在 DMG 生成前完成应用整包签名；没有证书时使用完整的 ad-hoc 签名，并在构建结束执行 `codesign --deep --strict` 校验。也可以显式指定签名身份：
+
+```bash
+APPLE_SIGNING_IDENTITY="Developer ID Application: NAME (TEAM_ID)" ./build-macos.sh apple
+```
+
+面向其他用户直接分发仍需 Apple Developer ID 签名和 notarization。微信、浏览器等给现有 ad-hoc 测试包添加隔离属性后，macOS 可能显示应用“已损坏”；仅对确认来源可信的本机构建，可在拖入“应用程序”后清理隔离属性：
+
+```bash
+xattr -cr "/Applications/矩龙破甲.app"
+```
 
 ### Windows 构建
 
