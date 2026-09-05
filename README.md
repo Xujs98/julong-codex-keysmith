@@ -173,11 +173,14 @@ Windows 正式交付使用带有矩龙破甲品牌视觉的 NSIS `.exe` 安装�
 如果开发电脑是 macOS，可使用 `cargo-xwin` 在本机交叉编译，不需要提交代码，也不需要 GitHub Actions：
 
 ```bash
-# 直接生成 Windows x64 可执行文件
+# 默认生成 Windows x64 NSIS 安装程序
 ./build-windows.sh
 
-# Windows ARM64
-./build-windows.sh arm64
+# 仅生成 Windows x64 裸 EXE 调试目录
+./build-windows.sh exe x64
+
+# Windows ARM64 NSIS
+./build-windows.sh nsis arm64
 ```
 
 首次使用前安装交叉编译工具：
@@ -186,19 +189,7 @@ Windows 正式交付使用带有矩龙破甲品牌视觉的 NSIS `.exe` 安装�
 cargo install cargo-xwin
 ```
 
-产物位于 `artifacts/windows-local/`，其中包含 `矩龙破甲.exe`、`julong-codex.exe`、`bridge.md`、`codex-skills/` 和 `mcp-tools/`。这一脚本只整理裸 EXE；完整 NSIS 安装包可继续使用下方的 Tauri 交叉打包命令，或在 Windows 目标机执行 `build-windows.cmd`。
-
-当前项目使用的 Tauri CLI 2.11 支持在 macOS 上调用本机 `makensis` 生成 Windows x64 NSIS 安装包。已安装 `cargo-xwin`、Homebrew LLVM 和 NSIS 后执行：
-
-```bash
-eval "$(cargo xwin env --target x86_64-pc-windows-msvc)"
-export PATH="$HOME/.nvm/versions/node/v24.13.0/bin:/usr/local/opt/llvm/bin:$PATH"
-npm ci
-node scripts/prepare-sidecar.mjs x86_64-pc-windows-msvc
-npx tauri build --runner cargo-xwin --config src-tauri/tauri.sidecar.conf.json --target x86_64-pc-windows-msvc --bundles nsis
-```
-
-NSIS 安装程序输出到 `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`。这条流程会同时携带桌面主程序、`julong-codex.exe` sidecar、`bridge.md`、`codex-skills/` 与 `mcp-tools/`。
+当前项目使用的 Tauri CLI 2.11 会在 macOS 上调用本机 `makensis`。默认 NSIS 安装程序输出到 `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`，并携带桌面主程序、`julong-codex.exe` sidecar、`bridge.md`、`codex-skills/` 与 `mcp-tools/`。`exe` 模式输出到 `artifacts/windows-local/`。
 
 ### CLI 控制台
 

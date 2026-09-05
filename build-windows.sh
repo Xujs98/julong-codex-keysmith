@@ -1,70 +1,96 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# macOS 本机交叉编译 Windows 可执行文件。
-# 产物：artifacts/windows-local/矩龙破甲.exe
+# macOS 本机交叉构建 Windows 交付物。默认生成 x64 NSIS 安装程序。
 
-ARCH="${1:-x64}"
+MODE="${1:-nsis}"
+ARCH="${2:-x64}"
+
+if [[ "$MODE" == "x64" || "$MODE" == "arm64" ]]; then
+  ARCH="$MODE"
+  MODE="nsis"
+fi
+
+if [[ "$MODE" == "-h" || "$MODE" == "--help" ]]; then
+  echo "Usage: $0 [nsis|exe] [x64|arm64]"
+  echo "Default: $0 nsis x64"
+  exit 0
+fi
+
+case "$MODE" in
+  nsis|exe) ;;
+  *) echo "Usage: $0 [nsis|exe] [x64|arm64]"; exit 2 ;;
+esac
+
 case "$ARCH" in
   x64) TARGET="x86_64-pc-windows-msvc" ;;
   arm64) TARGET="aarch64-pc-windows-msvc" ;;
-  *) echo "Usage: $0 [x64|arm64]"; exit 2 ;;
+  *) echo "Usage: $0 [nsis|exe] [x64|arm64]"; exit 2 ;;
 esac
 
 [[ "$(uname -s)" == "Darwin" ]] || { echo "Run this script on macOS."; exit 1; }
 
-# 从 Finder / 非交互 shell 调用时，nvm 的 Node 通常不在 PATH。自动发现一个本地
-# nvm 版本，保持用户只需执行一条构建命令。
+# Finder 和非交互 Shell 通常没有加载 nvm。
 if ! command -v node >/dev/null 2>&1; then
   NVM_NODE_BIN="$(find "${HOME}/.nvm/versions/node" -maxdepth 3 -type f -path '*/bin/node' -print 2>/dev/null | sort | tail -n 1 | xargs -n 1 dirname 2>/dev/null || true)"
-  [[ -n "${NVM_NODE_BIN}" ]] && export PATH="${NVM_NODE_BIN}:${PATH}"
+  [[ -n "$NVM_NODE_BIN" ]] && export PATH="$NVM_NODE_BIN:$PATH"
 fi
 
-# Tauri 的 Windows 资源编译需要 llvm-rc。Homebrew LLVM 是 keg-only，因此同样
-# 自动加入 PATH；未安装时给出一次性的准确安装命令。
+# Homebrew LLVM 是 keg-only，Windows 资源编译需要其中的 llvm-rc。
 if ! command -v llvm-rc >/dev/null 2>&1 && command -v brew >/dev/null 2>&1; then
   LLVM_BIN="$(brew --prefix llvm 2>/dev/null || true)/bin"
-  [[ -x "${LLVM_BIN}/llvm-rc" ]] && export PATH="${LLVM_BIN}:${PATH}"
+  [[ -x "$LLVM_BIN/llvm-rc" ]] && export PATH="$LLVM_BIN:$PATH"
 fi
-command -v llvm-rc >/dev/null 2>&1 || {
-  echo "Missing required command: llvm-rc"
-  echo "Install with: brew install llvm"
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 && return
+  echo "Missing required command: $1"
+  case "$1" in
+    cargo-xwin) echo "Install with: cargo install cargo-xwin" ;;
+    llvm-rc) echo "Install with: brew install llvm" ;;
+    makensis) echo "Install with: brew install nsis" ;;
+  esac
   exit 1
 }
 
-for command_name in cargo cargo-xwin rustup; do
-  command -v "$command_name" >/dev/null 2>&1 || {
-    echo "Missing required command: $command_name"
-    [[ "$command_name" == "cargo-xwin" ]] && echo "Install with: cargo install cargo-xwin"
-    exit 1
-  }
+for command_name in node npm npx cargo cargo-xwin rustup llvm-rc; do
+  require_command "$command_name"
 done
+[[ "$MODE" == "nsis" ]] && require_command makensis
 
-if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
-  if [[ -f package-lock.json ]]; then npm ci; else npm install; fi
-  npm run copy-resources
-else
-  echo "Node/npm not found; using checked-in frontend and embedded bridge fallback."
-fi
-
+echo "=== Windows $MODE build ($TARGET) ==="
+if [[ -f package-lock.json ]]; then npm ci; else npm install; fi
 rustup target add "$TARGET"
 
-echo "Building Windows executable locally: $TARGET"
-cargo xwin build \
-  --manifest-path src-tauri/Cargo.toml \
-  --target "$TARGET" \
-  --release
+# prepare-sidecar.mjs 调用普通 cargo，因此先导入 cargo-xwin 的 SDK、链接器和头文件环境。
+PATH_BEFORE_XWIN="$PATH"
+eval "$(cargo-xwin env --target "$TARGET")"
+export PATH="$PATH_BEFORE_XWIN:$PATH"
+node scripts/prepare-sidecar.mjs "$TARGET"
 
 RELEASE_DIR="src-tauri/target/$TARGET/release"
+if [[ "$MODE" == "nsis" ]]; then
+  npx tauri build \
+    --runner cargo-xwin \
+    --config src-tauri/tauri.sidecar.conf.json \
+    --target "$TARGET" \
+    --bundles nsis \
+    --ci
+
+  BUNDLE_DIR="$RELEASE_DIR/bundle/nsis"
+  INSTALLER="$(find "$BUNDLE_DIR" -maxdepth 1 -type f -name '*.exe' -print -quit 2>/dev/null || true)"
+  [[ -n "$INSTALLER" ]] || { echo "NSIS installer not found under $BUNDLE_DIR"; exit 1; }
+  find "$BUNDLE_DIR" -maxdepth 1 -type f -name '*.exe' -print | sed 's#^#[OK] #'
+  exit 0
+fi
+
+cargo-xwin build --manifest-path src-tauri/Cargo.toml --target "$TARGET" --release
+
 SOURCE_EXE="$RELEASE_DIR/julong-codex-keysmith.exe"
-if [[ ! -f "$SOURCE_EXE" ]]; then
-  SOURCE_EXE="$RELEASE_DIR/super-instruct.exe"
-fi
-if [[ ! -f "$SOURCE_EXE" ]]; then
-  SOURCE_EXE="$RELEASE_DIR/矩龙破甲.exe"
-fi
-[[ -f "$SOURCE_EXE" ]] || { echo "Windows executable not found under $RELEASE_DIR"; exit 1; }
+[[ -f "$SOURCE_EXE" ]] || SOURCE_EXE="$RELEASE_DIR/super-instruct.exe"
+[[ -f "$SOURCE_EXE" ]] || SOURCE_EXE="$RELEASE_DIR/矩龙破甲.exe"
 CLI_EXE="$RELEASE_DIR/julong-codex.exe"
+[[ -f "$SOURCE_EXE" ]] || { echo "Windows executable not found under $RELEASE_DIR"; exit 1; }
 [[ -f "$CLI_EXE" ]] || { echo "Windows CLI executable not found: $CLI_EXE"; exit 1; }
 
 OUT_DIR="artifacts/windows-local"
@@ -72,8 +98,6 @@ rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 cp "$SOURCE_EXE" "$OUT_DIR/矩龙破甲.exe"
 cp "$CLI_EXE" "$OUT_DIR/julong-codex.exe"
-
-# 直运行 EXE 时将 Skills 放在旁边，保证运行时可扫描。
 cp bridge.md "$OUT_DIR/bridge.md"
 cp -R codex-skills "$OUT_DIR/codex-skills"
 cp -R mcp-tools "$OUT_DIR/mcp-tools"
