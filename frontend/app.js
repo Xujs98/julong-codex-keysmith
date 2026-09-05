@@ -73,7 +73,7 @@ const el = {
 // ── 状态 ────────────────────────────────
 
 let isRunning = false;
-// 防双击: invoke 进行中置灰开关，避免秒启秒停导致配置目录反复 deploy/restore
+// 防双击: invoke 进行中置灰开关，避免秒启秒停导致运行状态抖动
 let proxyBusy = false;
 let stopConfirmTimer = null;
 let stopConfirmRemaining = 0;
@@ -1177,6 +1177,7 @@ $('provider-modal-save')?.addEventListener('click', async () => { try { const p 
 $('btn-provider-models')?.addEventListener('click', async () => { const p = providerForm(); const btn = $('btn-provider-models'); try { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.classList.add('loading'); btn.querySelector('b').textContent = '下载中…'; const models = await invoke('fetch_provider_models', { provider: p }); populateModelPicker(models, $('provider-default-model').value.trim()); showToast(`已获取 ${models.length} 个模型`, 'ok'); } catch (e) { $('provider-modal-message').textContent = `模型获取失败：${e}`; } finally { btn.disabled = false; btn.removeAttribute('aria-busy'); btn.classList.remove('loading'); btn.querySelector('b').textContent = '下载模型'; } });
 
 listen('provider-switched', event => { const p = event.payload || {}; activeProviderId = p.provider_id || activeProviderId; if (el.providerRuntime) el.providerRuntime.textContent = `${p.provider || '供应商'} · 已自动切换`; showToast(`上游异常，已自动切换至 ${p.provider || '下一供应商'}`, 'ok'); loadProviders(); updateCurrentProviderLabels(); });
+listen('provider-model-fallback', event => { const p = event.payload || {}; if (el.providerRuntime) el.providerRuntime.textContent = `${p.provider || '供应商'} · ${p.fallback_model || '备用模型'}`; showToast(`模型 ${p.rejected_model || ''} 暂不可用，已切换至 ${p.fallback_model || '备用模型'}`, 'ok'); loadProviders(); updateCurrentProviderLabels(); });
 
 // ── MCP 工具目录 ─────────────────────────
 

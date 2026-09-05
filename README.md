@@ -49,12 +49,12 @@ julong-codex CLI ─┬─ start / stop / status ─▶ 复用同一套 DeployMa
 | M6 Monitor | ResponseInterceptor | 通过 Tauri 事件向前端推送实时交互数据和统计 |
 | Deploy | — | Codex config.toml 备份/修改/恢复，部署 bridge.md + skills/ |
 | Providers | — | 多供应商持久化、拖拽排序、测速/模型拉取、auth.json/config.toml 同步与异常自动切换 |
-| CLI | — | `julong-codex start/stop/status`，与桌面端共享部署、恢复、端口和健康检查逻辑 |
+| CLI | — | `julong-codex start/stop/status`，与桌面端共享部署、停止、端口和健康检查逻辑 |
 | MCP Tools | — | 31 个配置驱动工具，支持 Local / WSL / Docker / SSH，带超时、输出上限和可用性检查 |
 
 仪表盘的“实时活动”面板会完整展示破解、逆向、渗透和已篡改四类执行状态；总交互数显示在面板标题中，各分类累计数量显示在对应机器人卡片右上角，并随事件实时刷新。命中机器人后，其黑色终端屏幕显示与当前请求关联的模拟命令、实时阶段、进度百分比和运行时长；状态通过独立的最新值事件通道异步推送，代理仅通过 Tauri 事件心跳和请求生命周期同步状态，不向 Codex 的 SSE 响应注入 keepalive、不提前截断上游流，也不会把上游断流时的半截响应交给 Codex。任务结束后自动恢复分类名称和空闲喝咖啡状态。命令仅作为界面事件文本展示，不调用本机 shell。
 
-“供应商”页面支持添加多个 API 中转，拖拽调整优先级并点击“使用”置顶。当前供应商使用蓝色状态高亮，使用按钮会锁定为“使用中”；卡片操作区使用统一矢量图标，连接测试期间仅让测试图标原地旋转，保持卡片布局稳定。添加/编辑采用分区式供应商工作台弹窗，删除操作使用应用内确认层并在删除当前项后自动选择下一供应商。保存供应商时仅持久化应用内列表；停止状态下点击“使用”只调整优先级，点击“启动代理”时才会将当前供应商投影写入 `~/.codex/auth.json` 与 `~/.codex/config.toml`，并在代理运行期间保留本地 `127.0.0.1:8080` 入口；首次改写会保存一次原始快照。空的 `auth.json` 会初始化为合法 JSON，空的 `config.toml` 会生成包含 `model_provider` 与 `[model_providers.custom]` 的完整配置。供应商页“还原”按钮会停止本项目代理，恢复 config.toml/auth.json，移除 bridge.md、relay_url.txt 和本次部署清单，用户原有 Skills 与应用内供应商列表保持不变。上游网络错误、401/403、429 或 5xx 会按排序自动切换并在界面标注。配置管理页不再重复提供旧的“中转站地址”编辑框，左下状态卡与配置环境均显示当前供应商名称；工作台主题选择器使用三列紧凑布局，减少纵向占用。
+“供应商”页面支持添加多个 API 中转，拖拽调整优先级并点击“使用”置顶。当前供应商使用蓝色状态高亮，使用按钮会锁定为“使用中”；卡片操作区使用统一矢量图标，连接测试期间仅让测试图标原地旋转，保持卡片布局稳定。添加/编辑采用分区式供应商工作台弹窗，删除操作使用应用内确认层并在删除当前项后自动选择下一供应商。保存供应商时仅持久化应用内列表；停止状态下点击“使用”只调整优先级，点击“启动代理”时才会将当前供应商投影写入 `~/.codex/auth.json` 与 `~/.codex/config.toml`，并在代理运行期间保留本地 `127.0.0.1:8080` 入口；首次改写会保存一次原始快照。空的 `auth.json` 会初始化为合法 JSON，空的 `config.toml` 会生成包含 `model_provider` 与 `[model_providers.custom]` 的完整配置。普通“停止代理”只结束本地进程，`config.toml`、`auth.json` 与部署文件保持不变；供应商页“还原”按钮才会停止代理、恢复 config.toml/auth.json，并移除 bridge.md、relay_url.txt 和本次部署清单。上游网络错误、401/403、429 或 5xx 会按排序自动切换；账号组对当前模型返回特定 404 时，代理会优先从已下载模型中选择对应基础模型单次重试，成功后持久化模型选择并在界面标注。配置管理页不再重复提供旧的“中转站地址”编辑框，左下状态卡与配置环境均显示当前供应商名称；工作台主题选择器使用三列紧凑布局，减少纵向占用。
 
 代理启动、运行期间手动切换或自动故障切换改写 `config.toml` 后，会在确认 `bridge.md` 哈希与核心注入字段仍有效的前提下同步更新部署清单，因此配置管理页不会再把应用自身的合法配置更新误报为“文件发生漂移”；真实的 `bridge.md` 变更仍会触发完整性告警。
 
@@ -186,7 +186,19 @@ Windows 正式交付使用带有矩龙破甲品牌视觉的 NSIS `.exe` 安装�
 cargo install cargo-xwin
 ```
 
-产物位于 `artifacts/windows-local/`，其中包含 `矩龙破甲.exe`、`julong-codex.exe`、`bridge.md`、`codex-skills/` 和 `mcp-tools/`。macOS 上的交叉编译用于可执行文件检查；完整 NSIS 安装包仍在 Windows 目标机执行 `build-windows.cmd`。
+产物位于 `artifacts/windows-local/`，其中包含 `矩龙破甲.exe`、`julong-codex.exe`、`bridge.md`、`codex-skills/` 和 `mcp-tools/`。这一脚本只整理裸 EXE；完整 NSIS 安装包可继续使用下方的 Tauri 交叉打包命令，或在 Windows 目标机执行 `build-windows.cmd`。
+
+当前项目使用的 Tauri CLI 2.11 支持在 macOS 上调用本机 `makensis` 生成 Windows x64 NSIS 安装包。已安装 `cargo-xwin`、Homebrew LLVM 和 NSIS 后执行：
+
+```bash
+eval "$(cargo xwin env --target x86_64-pc-windows-msvc)"
+export PATH="$HOME/.nvm/versions/node/v24.13.0/bin:/usr/local/opt/llvm/bin:$PATH"
+npm ci
+node scripts/prepare-sidecar.mjs x86_64-pc-windows-msvc
+npx tauri build --runner cargo-xwin --config src-tauri/tauri.sidecar.conf.json --target x86_64-pc-windows-msvc --bundles nsis
+```
+
+NSIS 安装程序输出到 `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`。这条流程会同时携带桌面主程序、`julong-codex.exe` sidecar、`bridge.md`、`codex-skills/` 与 `mcp-tools/`。
 
 ### CLI 控制台
 
@@ -211,9 +223,9 @@ julong-codex status
 
 终端提示 `zsh: command not found: julong-codex` 时，通常是尚未建立这个软链接，或 `~/.local/bin` 尚未加入当前 shell 的 `PATH`；重新运行脚本并执行 `source ~/.zshrc` 即可。Windows 安装包将 CLI 放在安装目录，首次使用时把该目录加入用户 PATH，然后运行 `julong-codex.exe status`。
 
-Windows 目标机的 NSIS 安装包会携带 `julong-codex.exe`。可在安装目录直接运行，或将安装目录加入用户 `PATH` 后运行 `julong-codex.exe status`。`start` 可重复执行且不会重复部署；`stop` 可重复恢复；`status` 同时显示代理进程、8080 端口、部署完整性和中转站。
+Windows 目标机的 NSIS 安装包会携带 `julong-codex.exe`。可在安装目录直接运行，或将安装目录加入用户 `PATH` 后运行 `julong-codex.exe status`。`start` 与 `stop` 均可重复执行；普通 `stop` 不改写 `config.toml` 和 `auth.json`，`status` 同时显示代理进程、8080 端口、部署完整性和中转站。
 
-当 8080 端口空闲时，可使用隔离的临时 `CODEX_HOME` 重复验证 `start` / `stop` / `status`，脚本会检查两次启动、两次停止和最终配置回滚；如果端口已被现有代理占用，脚本以 77 退出且不触碰现有进程。
+当 8080 端口空闲时，可使用隔离的临时 `CODEX_HOME` 重复验证 `start` / `stop` / `status`，脚本会检查两次启动、两次停止，并逐字节比较停止前后的 `config.toml` 与 `auth.json`；如果端口已被现有代理占用，脚本以 77 退出且不触碰现有进程。
 
 ```bash
 ./scripts/verify-cli.sh src-tauri/target/debug/julong-codex
@@ -271,7 +283,7 @@ python3 -m json.tool mcp-tools/tools.json >/dev/null
 2. 应用自动修改 Codex config.toml（备份原始配置到 `.super-instruct-bak`）
 3. 在 Codex CLI 中正常对话，所有请求经过 MITM 管道
 4. 前端仪表盘实时显示交互流、篡改状态、统计
-5. 点击"停止代理"自动恢复 Codex 原始配置
+5. 点击“停止代理”只结束本地代理进程，当前 Codex 配置保持不变
 
 停止代理默认采用 3 秒确认保护弹窗：倒计时期间按钮锁定，结束后可选择“确认停止”或“继续运行”，支持 Esc 关闭弹窗。配置管理中可开启或关闭等待保护，并将等待时长设置为 1–30 秒；关闭等待后仍保留确认弹窗，确认按钮会立即可用，设置保存在本机浏览器存储中。
 
@@ -344,7 +356,7 @@ python3 codex-skills/novel-agent/scripts/novel_agent.py --project PATH state
 python3 codex-skills/novel-agent/scripts/novel_agent.py --project PATH context recall --query "关键词"
 ```
 
-Skills 管理页的开关会立即同步文件；代理启动时会再次校准，停止代理会恢复 `config.toml`/`auth.json`/`bridge.md`，保留已启用的 Skills；供应商页“还原”还会额外清理 `relay_url.txt` 和部署清单。
+Skills 管理页的开关会立即同步文件；代理启动时会再次校准。普通停止与退出只结束进程并保留 `config.toml`、`auth.json`、`bridge.md` 和已启用的 Skills；供应商页“还原”会恢复配置与认证，并清理 `bridge.md`、`relay_url.txt` 和部署清单。
 
 ## 技术栈
 

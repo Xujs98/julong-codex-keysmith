@@ -75,7 +75,7 @@ fn command_start() -> i32 {
                 })
                 .unwrap_or(false);
             if !deployment_ok {
-                eprintln!("[FAIL] 矩龙代理已监听，但部署状态不一致，请先执行 stop 恢复");
+                eprintln!("[FAIL] 矩龙代理已监听，但部署状态不一致，请使用应用内“还原”后重试");
                 return 1;
             }
             println!("Proxy: RUNNING on 127.0.0.1:8080");
@@ -174,7 +174,8 @@ fn command_stop() -> i32 {
     match runtime::terminate_managed_proxy(manager.codex_home()) {
         Ok(true) => {
             if !runtime::wait_for_port(false, Duration::from_secs(5)) {
-                eprintln!("[WARN] 代理端口仍在监听，继续执行配置恢复");
+                eprintln!("[FAIL] 代理端口仍在监听；config.toml 与 auth.json 保持不变");
+                return 1;
             }
         }
         Ok(false) => {}
@@ -183,17 +184,9 @@ fn command_stop() -> i32 {
             return 1;
         }
     }
-    match manager.restore() {
-        Ok(message) => {
-            println!("[OK] Proxy stopped");
-            println!("[OK] {message}");
-            0
-        }
-        Err(error) => {
-            eprintln!("[FAIL] 恢复 Codex 配置失败: {error}");
-            1
-        }
-    }
+    println!("[OK] Proxy stopped");
+    println!("[OK] config.toml and auth.json unchanged");
+    0
 }
 
 fn command_status() -> i32 {
@@ -248,10 +241,11 @@ fn command_status() -> i32 {
     println!("transaction: {}", if pending { "PENDING" } else { "clean" });
     println!("relay: {relay}");
     let consistent = manager.is_some()
+        && !pending
         && if running {
-            deployed && integrity && !pending
+            deployed && integrity
         } else {
-            !occupied && !deployed && !pending
+            !occupied && (!deployed || integrity)
         };
     if consistent {
         0

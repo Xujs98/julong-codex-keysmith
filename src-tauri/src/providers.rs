@@ -8,6 +8,7 @@ use chrono::Utc;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -89,18 +90,26 @@ pub struct ProviderRuntime {
     pub current_index: usize,
     pub switch_count: usize,
     pub last_error: String,
+    model_fallbacks: BTreeMap<String, String>,
 }
 
 impl ProviderRuntime {
-    pub fn load() -> Result<Self, String> {
-        let home = DeployManager::find_codex_home().ok_or("Codex home not found")?;
-        let providers = load_or_migrate(&home)?;
-        Ok(Self {
-            providers,
+    pub fn empty() -> Self {
+        Self {
+            providers: Vec::new(),
             current_index: 0,
             switch_count: 0,
             last_error: String::new(),
-        })
+            model_fallbacks: BTreeMap::new(),
+        }
+    }
+
+    pub fn load() -> Result<Self, String> {
+        let home = DeployManager::find_codex_home().ok_or("Codex home not found")?;
+        let providers = load_or_migrate(&home)?;
+        let mut runtime = Self::empty();
+        runtime.providers = providers;
+        Ok(runtime)
     }
     pub fn current(&self) -> Option<&Provider> {
         self.providers.get(self.current_index)
@@ -111,7 +120,23 @@ impl ProviderRuntime {
         }
         self.current_index = (self.current_index + 1) % self.providers.len();
         self.switch_count += 1;
+        self.model_fallbacks.clear();
         self.providers.get(self.current_index).cloned()
+    }
+    pub fn mapped_model(&self, requested: &str) -> Option<String> {
+        self.model_fallbacks.get(requested).cloned()
+    }
+    pub fn remember_model_fallback(&mut self, rejected: &str, fallback: &str) {
+        for mapped in self.model_fallbacks.values_mut() {
+            if mapped.eq_ignore_ascii_case(rejected) {
+                *mapped = fallback.to_string();
+            }
+        }
+        self.model_fallbacks
+            .insert(rejected.to_string(), fallback.to_string());
+    }
+    pub fn clear_model_fallbacks(&mut self) {
+        self.model_fallbacks.clear();
     }
     pub fn status(&self) -> ProviderRuntimeStatus {
         ProviderRuntimeStatus {
@@ -450,6 +475,56 @@ pub fn save(provider: Provider) -> Result<Vec<Provider>, String> {
     Ok(list)
 }
 
+/// 持久化代理运行期间确认可用的模型，只更新供应商存储与 config.toml。
+/// auth.json 不属于模型选择，保持字节级不变。
+pub fn persist_default_model(provider_id: &str, model: &str) -> Result<Provider, String> {
+    let home = DeployManager::find_codex_home().ok_or("Codex home not found")?;
+    let transaction = FileTransaction::begin(
+        &home,
+        "provider-model-fallback",
+        &[
+            PathBuf::from(STORE_FILE),
+            PathBuf::from("config.toml"),
+            PathBuf::from(DEPLOYMENT_MANIFEST),
+        ],
+    )?;
+
+    let result = (|| -> Result<Provider, String> {
+        let mut list = load_or_migrate(&home)?;
+        let provider = list
+            .iter_mut()
+            .find(|provider| provider.id == provider_id)
+            .ok_or_else(|| format!("provider not found: {provider_id}"))?;
+        provider.default_model = model.trim().to_string();
+        provider.updated_at = Utc::now().to_rfc3339();
+        let updated = provider.clone();
+        save_list(&home, &list)?;
+
+        let config_path = home.join("config.toml");
+        let existing = fs::read_to_string(&config_path)
+            .map_err(|error| format!("read config.toml failed: {error}"))?;
+        let rendered = render_provider_config(&existing, &updated, "http://127.0.0.1:8080");
+        atomic_write(&config_path, rendered.as_bytes())?;
+        Ok(updated)
+    })();
+
+    match result {
+        Ok(updated) => {
+            transaction.commit()?;
+            if let Some(manager) = DeployManager::new() {
+                if let Err(error) = manager.refresh_config_integrity() {
+                    tracing::warn!("refresh model fallback integrity failed: {error}");
+                }
+            }
+            Ok(updated)
+        }
+        Err(error) => match transaction.rollback() {
+            Ok(()) => Err(format!("{error}; 已回滚到操作前状态")),
+            Err(rollback) => Err(format!("{error}; 回滚失败: {rollback}")),
+        },
+    }
+}
+
 pub fn delete(id: &str) -> Result<Vec<Provider>, String> {
     let home = DeployManager::find_codex_home().ok_or("Codex home not found")?;
     let mut list = load_or_migrate(&home)?;
@@ -529,6 +604,8 @@ mod tests {
     use super::*;
     use std::sync::{Mutex, OnceLock};
 
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
     fn provider() -> Provider {
         Provider {
             id: "provider-1".into(),
@@ -601,7 +678,6 @@ mod tests {
 
     #[test]
     fn activate_initializes_empty_codex_files() {
-        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
         let root = std::env::temp_dir().join(format!(
             "julong-provider-activate-{}",
@@ -627,6 +703,44 @@ mod tests {
         assert!(config.contains("model_provider = \"custom\""));
         assert!(config.contains("base_url = \"http://127.0.0.1:8080\""));
         assert_eq!(auth["OPENAI_API_KEY"], "sk-test");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn model_fallback_persistence_does_not_touch_auth() {
+        let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "julong-provider-model-fallback-{}",
+            Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("config.toml"),
+            "model = \"gpt-5.6-sol\"\nmodel_provider = \"custom\"\n\n[model_providers.custom]\nname = \"Test\"\nbase_url = \"http://127.0.0.1:8080\"\n",
+        )
+        .unwrap();
+        let auth = b"{\n \"OPENAI_API_KEY\":\"preserve-format\"\n}\n";
+        fs::write(root.join("auth.json"), auth).unwrap();
+        let mut provider = provider();
+        provider.default_model = "gpt-5.6-sol".into();
+        provider.models = vec!["gpt-5.6-sol".into(), "gpt-5.6".into()];
+        save_list(&root, &[provider.clone()]).unwrap();
+
+        let previous = std::env::var_os("CODEX_HOME");
+        std::env::set_var("CODEX_HOME", &root);
+        let updated = persist_default_model(&provider.id, "gpt-5.6");
+        if let Some(value) = previous {
+            std::env::set_var("CODEX_HOME", value);
+        } else {
+            std::env::remove_var("CODEX_HOME");
+        }
+
+        assert_eq!(updated.unwrap().default_model, "gpt-5.6");
+        assert!(fs::read_to_string(root.join("config.toml"))
+            .unwrap()
+            .contains("model = \"gpt-5.6\""));
+        assert_eq!(fs::read(root.join("auth.json")).unwrap(), auth);
+        assert_eq!(load_or_migrate(&root).unwrap()[0].default_model, "gpt-5.6");
         fs::remove_dir_all(root).unwrap();
     }
 }

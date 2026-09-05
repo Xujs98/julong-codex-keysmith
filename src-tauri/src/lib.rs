@@ -112,7 +112,8 @@ pub fn run() {
             }
         })
         .setup(|app| {
-            // 优先恢复崩溃中断的文件事务，再处理残留部署。
+            // 仅恢复崩溃中断的文件事务。普通停止会保留部署文件与 Codex 配置，
+            // 后续可直接重新启动代理；完整回滚只由显式“还原”操作触发。
             if let Some(manager) = DeployManager::new() {
                 match manager.recover_pending() {
                     Ok(Some(message)) => tracing::warn!("startup: {message}"),
@@ -120,33 +121,17 @@ pub fn run() {
                     Err(error) => tracing::error!("startup: transaction recovery failed: {error}"),
                 }
                 let status = manager.status();
-                if status.config_backed_up && !runtime::proxy_is_healthy() {
-                    tracing::warn!(
-                        "startup: residual deployment detected (bridge_active={}, backup exists), auto-restoring",
-                        status.bridge_active
-                    );
-                    match manager.restore() {
-                        Ok(msg) => {
-                            tracing::info!("startup: auto-restore succeeded: {}", msg);
-                            let _ = app.emit("interaction", InteractionEvent {
-                                id: 0,
-                                timestamp: chrono::Utc::now().to_rfc3339(),
-                                category: "system".into(),
-                                user_preview: "残留部署检测".into(),
-                                ai_preview: format!("检测到上次未正常关闭，已自动恢复 Codex 配置 ({})", msg),
-                                thinking_preview: String::new(),
-                                tampered: false,
-                                bytes: 0,
-                                duration_ms: 0,
-                            });
-                        }
-                        Err(e) => tracing::error!("startup: auto-restore failed: {}", e),
+                if status.config_backed_up {
+                    if runtime::proxy_is_healthy() {
+                        tracing::info!(
+                            "startup: managed CLI proxy is active on {}, keeping deployment",
+                            runtime::PROXY_ADDRESS
+                        );
+                    } else {
+                        tracing::info!(
+                            "startup: proxy is stopped; keeping Codex config and deployment unchanged"
+                        );
                     }
-                } else if status.config_backed_up {
-                    tracing::info!(
-                        "startup: managed CLI proxy is active on {}, keeping deployment",
-                        runtime::PROXY_ADDRESS
-                    );
                 } else {
                     tracing::debug!("startup: no residual deployment detected");
                 }
@@ -189,23 +174,9 @@ pub fn run() {
                             }
                         }
                         "quit" => {
-                            // 退出前只恢复桌面端自己的部署。CLI 托管代理存活时保留配置。
-                            if let Some(manager) = DeployManager::new() {
-                                let status = manager.status();
-                                let cli_managed = runtime::proxy_is_healthy()
-                                    && runtime::managed_proxy_pid(manager.codex_home()).is_some();
-                                if (status.config_backed_up || status.bridge_active) && !cli_managed {
-                                    tracing::info!("quit: restoring codex config before exit");
-                                    match manager.restore() {
-                                        Ok(msg) => tracing::info!("quit: restore succeeded: {}", msg),
-                                        Err(e) => tracing::error!("quit: restore failed: {}", e),
-                                    }
-                                } else if cli_managed {
-                                    tracing::info!(
-                                        "quit: CLI managed proxy is active; keeping deployment"
-                                    );
-                                }
-                            }
+                            tracing::info!(
+                                "quit: keeping config.toml, auth.json and deployment unchanged"
+                            );
                             // 先销毁窗口再退出，避免 Chromium "Failed to unregister class" Error 1412
                             if let Some(window) = app.get_webview_window("main") {
                                 let _ = window.destroy();
@@ -390,12 +361,7 @@ async fn start_proxy(
     // 4b. 供应商运行时池：首位供应商作为当前上游
     let provider_runtime = providers::ProviderRuntime::load().unwrap_or_else(|e| {
         tracing::warn!("start_proxy: provider store unavailable: {}", e);
-        providers::ProviderRuntime {
-            providers: Vec::new(),
-            current_index: 0,
-            switch_count: 0,
-            last_error: String::new(),
-        }
+        providers::ProviderRuntime::empty()
     });
     let relay_url = if let Some(provider) = provider_runtime
         .providers
@@ -562,6 +528,7 @@ async fn stop_proxy(
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
     let handle = state.proxy_handle.write().await.take();
+    let had_local_proxy = handle.is_some();
     if let Some(h) = handle {
         h.abort();
     }
@@ -574,31 +541,21 @@ async fn stop_proxy(
     *state.providers.write().await = None;
 
     // 桌面端也可停止 CLI 启动的托管代理；仅处理带 PID 文件的本项目进程。
+    let mut managed_proxy_stopped = false;
     if let Some(manager) = DeployManager::new() {
         match runtime::terminate_managed_proxy(manager.codex_home()) {
             Ok(true) => {
-                let _ = runtime::wait_for_port(false, std::time::Duration::from_secs(5));
+                managed_proxy_stopped = true;
             }
             Ok(false) => {}
             Err(error) => tracing::warn!("stop_proxy: managed process cleanup failed: {error}"),
         }
     }
-
-    // 自动恢复 Codex 配置：停止代理后 base_url 指向死端口会导致 Codex CLI 不可用
-    let restore_msg = if let Some(manager) = DeployManager::new() {
-        match manager.restore() {
-            Ok(msg) => {
-                tracing::info!("stop_proxy: auto-restore: {}", msg);
-                msg
-            }
-            Err(e) => {
-                tracing::warn!("stop_proxy: auto-restore failed: {}", e);
-                format!("auto-restore failed: {}", e)
-            }
-        }
-    } else {
-        "Codex home not found, skipping restore".to_string()
-    };
+    if (had_local_proxy || managed_proxy_stopped)
+        && !runtime::wait_for_port(false, std::time::Duration::from_secs(5))
+    {
+        return Err("代理端口仍在监听；config.toml 与 auth.json 保持不变".into());
+    }
 
     let _ = app.emit("proxy-status", "stopped");
 
@@ -610,7 +567,7 @@ async fn stop_proxy(
             timestamp: chrono::Utc::now().to_rfc3339(),
             category: "system".into(),
             user_preview: "停止代理".into(),
-            ai_preview: format!("代理已停止，Codex 配置已自动还原 ({})", restore_msg),
+            ai_preview: "代理已停止，config.toml 与 auth.json 保持不变".into(),
             thinking_preview: String::new(),
             tampered: false,
             bytes: 0,
@@ -618,12 +575,9 @@ async fn stop_proxy(
         },
     );
 
-    tracing::info!("stop_proxy: proxy stopped, codex config restored");
+    tracing::info!("stop_proxy: proxy stopped, Codex config and auth unchanged");
 
-    Ok(format!(
-        "Proxy stopped, codex config restored ({})",
-        restore_msg
-    ))
+    Ok("Proxy stopped; config.toml and auth.json unchanged".into())
 }
 
 #[tauri::command]
@@ -1024,6 +978,7 @@ async fn delete_provider(
         let mut runtime = runtime.write().await;
         let previous_current = runtime.current().map(|provider| provider.id.clone());
         runtime.providers = list.clone();
+        runtime.clear_model_fallbacks();
         runtime.current_index = previous_current
             .as_ref()
             .and_then(|current| list.iter().position(|provider| &provider.id == current))
@@ -1064,6 +1019,7 @@ async fn use_provider(
             let mut rt = runtime.write().await;
             rt.providers = ordered.clone();
             rt.current_index = 0;
+            rt.clear_model_fallbacks();
         }
         if let Some(core) = state.core.read().await.as_ref() {
             core.set_target(provider.normalized_url()).await;
@@ -1164,17 +1120,7 @@ async fn show_window(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 async fn quit_app(app: tauri::AppHandle) -> Result<(), String> {
-    // 退出前恢复 Codex 配置
-    if let Some(manager) = DeployManager::new() {
-        let status = manager.status();
-        if status.config_backed_up || status.bridge_active {
-            tracing::info!("quit_app: restoring codex config before exit");
-            match manager.restore() {
-                Ok(msg) => tracing::info!("quit_app: restore succeeded: {}", msg),
-                Err(e) => tracing::error!("quit_app: restore failed: {}", e),
-            }
-        }
-    }
+    tracing::info!("quit_app: keeping config.toml, auth.json and deployment unchanged");
     // 先销毁窗口再退出，避免 Chromium Error 1412
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.destroy();
@@ -1287,6 +1233,150 @@ fn is_response_hop_header(name: &str) -> bool {
     )
 }
 
+fn request_model(body: &[u8]) -> Option<String> {
+    serde_json::from_slice::<serde_json::Value>(body)
+        .ok()?
+        .get("model")?
+        .as_str()
+        .map(str::to_string)
+}
+
+fn rewrite_request_model(body: &[u8], model: &str) -> Result<bytes::Bytes, String> {
+    let mut value: serde_json::Value = serde_json::from_slice(body)
+        .map_err(|error| format!("parse request body failed: {error}"))?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| "request body must be a JSON object".to_string())?;
+    if !object.contains_key("model") {
+        return Err("request body has no model field".into());
+    }
+    object.insert("model".into(), serde_json::Value::String(model.to_string()));
+    serde_json::to_vec(&value)
+        .map(bytes::Bytes::from)
+        .map_err(|error| format!("serialize request body failed: {error}"))
+}
+
+fn unsupported_model_from_response(status: u16, body: &[u8]) -> Option<String> {
+    if status != 404 {
+        return None;
+    }
+    let parsed = serde_json::from_slice::<serde_json::Value>(body).ok();
+    let message = parsed
+        .as_ref()
+        .and_then(|value| {
+            value
+                .pointer("/error/message")
+                .or_else(|| value.get("message"))
+                .or_else(|| value.get("error"))
+                .and_then(serde_json::Value::as_str)
+        })
+        .map(str::to_string)
+        .unwrap_or_else(|| String::from_utf8_lossy(body).replace("\\\"", "\""));
+    let lower = message.to_ascii_lowercase();
+    if !lower.contains("not supported by any configured account in this group") {
+        return None;
+    }
+    regex::Regex::new(r#"(?i)model\s+["']([^"']+)["']"#)
+        .ok()?
+        .captures(&message)
+        .map(|captures| captures[1].to_string())
+}
+
+fn select_fallback_model(provider: &providers::Provider, rejected: &str) -> Option<String> {
+    let rejected = rejected.trim();
+    let models: Vec<&str> = provider
+        .models
+        .iter()
+        .map(|model| model.trim())
+        .filter(|model| !model.is_empty() && !model.eq_ignore_ascii_case(rejected))
+        .collect();
+
+    if let Some(base) = rejected.strip_suffix("-sol") {
+        if let Some(model) = models.iter().find(|model| model.eq_ignore_ascii_case(base)) {
+            return Some((*model).to_string());
+        }
+    }
+
+    let configured_default = provider.default_model.trim();
+    if !configured_default.is_empty()
+        && !configured_default.eq_ignore_ascii_case(rejected)
+        && (provider.models.is_empty()
+            || models
+                .iter()
+                .any(|model| model.eq_ignore_ascii_case(configured_default)))
+    {
+        return Some(configured_default.to_string());
+    }
+
+    models
+        .iter()
+        .find(|model| !model.ends_with("-sol"))
+        .or_else(|| models.first())
+        .map(|model| (*model).to_string())
+}
+
+fn buffered_upstream_response(
+    status: u16,
+    headers: http::HeaderMap,
+    content_type: Option<String>,
+    body: bytes::Bytes,
+) -> axum::response::Response {
+    let status =
+        axum::http::StatusCode::from_u16(status).unwrap_or(axum::http::StatusCode::BAD_GATEWAY);
+    let mut builder = axum::response::Response::builder().status(status);
+    for (name, value) in headers.iter() {
+        let lower = name.as_str().to_ascii_lowercase();
+        if is_response_hop_header(&lower) || lower == "content-type" {
+            continue;
+        }
+        builder = builder.header(name, value);
+    }
+    if let Some(content_type) = content_type {
+        builder = builder.header("content-type", content_type);
+    }
+    builder.body(axum::body::Body::from(body)).unwrap()
+}
+
+async fn record_model_fallback(
+    providers_runtime: &Arc<RwLock<providers::ProviderRuntime>>,
+    app: &tauri::AppHandle,
+    provider: &providers::Provider,
+    rejected: &str,
+    fallback: &str,
+) {
+    let persisted = providers::persist_default_model(&provider.id, fallback);
+    let updated = persisted.as_ref().ok().cloned().unwrap_or_else(|| {
+        let mut provider = provider.clone();
+        provider.default_model = fallback.to_string();
+        provider
+    });
+    {
+        let mut runtime = providers_runtime.write().await;
+        runtime.remember_model_fallback(rejected, fallback);
+        if let Some(current) = runtime
+            .providers
+            .iter_mut()
+            .find(|current| current.id == provider.id)
+        {
+            *current = updated;
+        }
+        runtime.last_error = format!("model {rejected} unavailable; using {fallback}");
+    }
+    if let Err(error) = &persisted {
+        tracing::warn!("persist model fallback failed: {error}");
+    }
+    let _ = app.emit(
+        "provider-model-fallback",
+        serde_json::json!({
+            "provider_id": provider.id,
+            "provider": provider.name,
+            "rejected_model": rejected,
+            "fallback_model": fallback,
+            "persisted": persisted.is_ok()
+        }),
+    );
+}
+
 async fn switch_provider(
     core: &Arc<MitmCore>,
     providers: &Arc<RwLock<providers::ProviderRuntime>>,
@@ -1376,7 +1466,7 @@ async fn handle_proxy(
     }
 
     let (parts, body) = req.into_parts();
-    let bytes = match axum::body::to_bytes(body, 10 * 1024 * 1024).await {
+    let incoming_bytes = match axum::body::to_bytes(body, 10 * 1024 * 1024).await {
         Ok(b) => b,
         Err(e) => {
             return axum::response::Response::builder()
@@ -1384,6 +1474,16 @@ async fn handle_proxy(
                 .body(axum::body::Body::from(format!("{{\"error\": \"{}\"}}", e)))
                 .unwrap();
         }
+    };
+    let bytes = if let Some(requested) = request_model(&incoming_bytes) {
+        let mapped = providers.read().await.mapped_model(&requested);
+        match mapped {
+            Some(model) => rewrite_request_model(&incoming_bytes, &model)
+                .unwrap_or_else(|_| incoming_bytes.clone()),
+            None => incoming_bytes,
+        }
+    } else {
+        incoming_bytes
     };
 
     // BUG-1 修复: 保留 query string，上游可能依赖 ?stream=true 等参数
@@ -1403,7 +1503,7 @@ async fn handle_proxy(
     let command = activity_command(&category, method.as_str(), &path_and_query);
     let activity_request = activity.start_with_command(category, command);
     let headers = parts.headers.clone();
-    let upstream = match core
+    let mut upstream = match core
         .handle_request(
             method.clone(),
             path_and_query.clone(),
@@ -1418,7 +1518,12 @@ async fn handle_proxy(
             let switched = switch_provider(&core, &providers, &app, e.to_string()).await;
             if switched {
                 match core
-                    .handle_request(method, path_and_query, headers, bytes)
+                    .handle_request(
+                        method.clone(),
+                        path_and_query.clone(),
+                        headers.clone(),
+                        bytes.clone(),
+                    )
                     .await
                 {
                     Ok(u) => u,
@@ -1445,6 +1550,93 @@ async fn handle_proxy(
         }
     };
     activity.update_phase(&category_label, "读取响应", 30);
+
+    // 某些中转站会在模型已列出但当前账号组没有通道时返回特定 404。
+    // 只对该错误读取一次响应体并改写 model 重试，避免普通 404 被误判或循环重试。
+    if upstream.status == 404 {
+        let crate::core::UpstreamResult {
+            meta: _,
+            status,
+            content_type,
+            headers: upstream_headers,
+            response,
+        } = upstream;
+        let error_body = match response.bytes().await {
+            Ok(body) => body,
+            Err(error) => {
+                drop(activity_request);
+                return axum::response::Response::builder()
+                    .status(axum::http::StatusCode::BAD_GATEWAY)
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(format!(
+                        "{{\"error\": \"failed to read upstream error: {}\"}}",
+                        error
+                    )))
+                    .unwrap();
+            }
+        };
+        let fallback_plan =
+            if let Some(rejected) = unsupported_model_from_response(status, &error_body) {
+                let runtime = providers.read().await;
+                runtime.current().cloned().and_then(|provider| {
+                    let fallback = select_fallback_model(&provider, &rejected)?;
+                    Some((provider, rejected, fallback))
+                })
+            } else {
+                None
+            };
+
+        if let Some((provider, rejected, fallback)) = fallback_plan {
+            let retry_body = match rewrite_request_model(&bytes, &fallback) {
+                Ok(body) => body,
+                Err(error) => {
+                    tracing::warn!("model fallback request rewrite failed: {error}");
+                    drop(activity_request);
+                    return buffered_upstream_response(
+                        status,
+                        upstream_headers,
+                        content_type,
+                        error_body,
+                    );
+                }
+            };
+            activity.update_phase(&category_label, "切换模型重试", 32);
+            tracing::warn!(
+                provider = %provider.name,
+                rejected_model = %rejected,
+                fallback_model = %fallback,
+                "upstream model unavailable, retrying once"
+            );
+            upstream = match core
+                .handle_request(
+                    method.clone(),
+                    path_and_query.clone(),
+                    headers.clone(),
+                    retry_body,
+                )
+                .await
+            {
+                Ok(retry) => retry,
+                Err(error) => {
+                    drop(activity_request);
+                    return axum::response::Response::builder()
+                        .status(axum::http::StatusCode::BAD_GATEWAY)
+                        .header("content-type", "application/json")
+                        .body(axum::body::Body::from(format!(
+                            "{{\"error\": \"model fallback request failed: {}\"}}",
+                            error
+                        )))
+                        .unwrap();
+                }
+            };
+            if (200..300).contains(&upstream.status) {
+                record_model_fallback(&providers, &app, &provider, &rejected, &fallback).await;
+            }
+        } else {
+            drop(activity_request);
+            return buffered_upstream_response(status, upstream_headers, content_type, error_body);
+        }
+    }
 
     let status =
         axum::http::StatusCode::from_u16(upstream.status).unwrap_or(axum::http::StatusCode::OK);
@@ -1788,4 +1980,62 @@ fn resolve_resource_dir(app: &tauri::AppHandle, name: &str) -> Result<std::path:
         }
     }
     find_resource_dir(name)
+}
+
+#[cfg(test)]
+mod proxy_tests {
+    use super::*;
+
+    fn provider_with_models(models: &[&str]) -> providers::Provider {
+        providers::Provider {
+            id: "provider-1".into(),
+            name: "Test provider".into(),
+            note: String::new(),
+            official_url: String::new(),
+            api_key: String::new(),
+            request_url: "https://relay.example".into(),
+            full_url: false,
+            default_model: "gpt-5.6-sol".into(),
+            models: models.iter().map(|model| (*model).to_string()).collect(),
+            last_latency_ms: None,
+            last_status: String::new(),
+            last_error: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn extracts_only_the_account_group_model_404() {
+        let json = br#"{"error":{"message":"Model \"gpt-5.6-sol\" is not supported by any configured account in this group"}}"#;
+        assert_eq!(
+            unsupported_model_from_response(404, json).as_deref(),
+            Some("gpt-5.6-sol")
+        );
+        assert_eq!(unsupported_model_from_response(400, json), None);
+        assert_eq!(
+            unsupported_model_from_response(404, br#"{"error":"route not found"}"#),
+            None
+        );
+    }
+
+    #[test]
+    fn prefers_the_configured_base_model_for_sol_failures() {
+        let provider = provider_with_models(&["gpt-5.6-sol", "gpt-5.5", "gpt-5.6"]);
+        assert_eq!(
+            select_fallback_model(&provider, "gpt-5.6-sol").as_deref(),
+            Some("gpt-5.6")
+        );
+    }
+
+    #[test]
+    fn rewrites_only_the_request_model_field() {
+        let body = br#"{"model":"gpt-5.6-sol","stream":true,"input":"keep me"}"#;
+        let rewritten = rewrite_request_model(body, "gpt-5.6").unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&rewritten).unwrap();
+        assert_eq!(value["model"], "gpt-5.6");
+        assert_eq!(value["stream"], true);
+        assert_eq!(value["input"], "keep me");
+        assert_eq!(request_model(&rewritten).as_deref(), Some("gpt-5.6"));
+    }
 }

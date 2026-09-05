@@ -164,3 +164,27 @@ fn terminate_pid(pid: u32) -> Result<(), String> {
         Err(format!("停止代理进程返回状态 {status}"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normal_stop_preserves_config_and_auth_bytes() {
+        let root = std::env::temp_dir().join(format!(
+            "julong-stop-preserve-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let config = b"model = \"gpt-5.6-sol\"\n# preserve formatting\n";
+        let auth = b"{\n  \"OPENAI_API_KEY\": \"keep-exactly\"\n}\n";
+        std::fs::write(root.join("config.toml"), config).unwrap();
+        std::fs::write(root.join("auth.json"), auth).unwrap();
+
+        assert!(!terminate_managed_proxy(&root).unwrap());
+        assert_eq!(std::fs::read(root.join("config.toml")).unwrap(), config);
+        assert_eq!(std::fs::read(root.join("auth.json")).unwrap(), auth);
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
