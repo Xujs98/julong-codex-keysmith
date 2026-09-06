@@ -467,11 +467,24 @@ impl DeployManager {
                 false
             };
 
+            // 供应商页的“还原”在完成与配置管理页相同的部署回滚后，
+            // 还要清空 Codex 配置并将认证重置为空对象。整个动作仍在同一
+            // 文件事务内，任一步失败都会回滚到点击前状态。
+            let files_cleared = if clean {
+                atomic_write(&cfg, b"").map_err(|e| format!("clear config.toml failed: {e}"))?;
+                atomic_write(&self.codex_home.join("auth.json"), b"{}\n")
+                    .map_err(|e| format!("reset auth.json failed: {e}"))?;
+                tracing::info!("restore: config.toml cleared and auth.json reset to {{}}");
+                true
+            } else {
+                false
+            };
+
             if clean {
                 Ok(format!(
                     "Codex clean environment restored (config: {}, auth: {}, bridge.md: {}, relay_url.txt: {})",
-                    if config_restored { "restored" } else { "unchanged" },
-                    if auth_restored { "restored" } else { "unchanged" },
+                    if files_cleared { "cleared" } else if config_restored { "restored" } else { "unchanged" },
+                    if files_cleared { "{}" } else if auth_restored { "restored" } else { "unchanged" },
                     if bridge_removed { "removed" } else { "absent" },
                     if relay_removed { "removed" } else { "absent" },
                 ))
@@ -989,10 +1002,8 @@ mod tests {
             codex_home: root.clone(),
         };
         manager.restore_clean().unwrap();
-        assert_eq!(
-            fs::read_to_string(&config).unwrap(),
-            "model = \"original\"\n"
-        );
+        assert_eq!(fs::read_to_string(&config).unwrap(), "");
+        assert_eq!(fs::read_to_string(root.join("auth.json")).unwrap(), "{}\n");
         assert!(!root.join(PROVIDER_CONFIG_BACKUP_FILE).exists());
         fs::remove_dir_all(root).unwrap();
     }
@@ -1027,10 +1038,8 @@ mod tests {
         assert!(root.join(PROVIDER_CONFIG_BACKUP_FILE).exists());
 
         manager.restore_clean().unwrap();
-        assert_eq!(
-            fs::read_to_string(root.join("config.toml")).unwrap(),
-            "model = \"original\"\n"
-        );
+        assert_eq!(fs::read_to_string(root.join("config.toml")).unwrap(), "");
+        assert_eq!(fs::read_to_string(root.join("auth.json")).unwrap(), "{}\n");
         assert!(!root.join(PROVIDER_CONFIG_BACKUP_FILE).exists());
         fs::remove_dir_all(root).unwrap();
     }
@@ -1056,14 +1065,8 @@ mod tests {
         };
 
         manager.restore_clean().unwrap();
-        assert_eq!(
-            fs::read_to_string(root.join("config.toml")).unwrap(),
-            "model = \"original\"\n"
-        );
-        assert_eq!(
-            fs::read_to_string(root.join("auth.json")).unwrap(),
-            r#"{"OPENAI_API_KEY":"user"}"#
-        );
+        assert_eq!(fs::read_to_string(root.join("config.toml")).unwrap(), "");
+        assert_eq!(fs::read_to_string(root.join("auth.json")).unwrap(), "{}\n");
         assert!(!root.join("bridge.md").exists());
         assert!(!root.join("relay_url.txt").exists());
         fs::remove_dir_all(root).unwrap();

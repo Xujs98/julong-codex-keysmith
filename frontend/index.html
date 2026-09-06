@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>矩龙破甲 · v0.2.0</title>
+    <title>矩龙破甲 · v0.2.1</title>
     <link rel="stylesheet" href="styles.css">
     <script type="module" src="app.js"></script>
 </head>
@@ -14,7 +14,7 @@
     <div class="tb-logo" data-tauri-drag-region>
         <img class="tb-logo-image" src="assets/molong-logo.png" alt="矩龙破甲" data-tauri-drag-region>
         <span class="tb-logo-text" data-tauri-drag-region>矩龙破甲</span>
-        <span class="tb-logo-sub" data-tauri-drag-region>Desktop Edition · v0.2.0</span>
+        <span class="tb-logo-sub" data-tauri-drag-region>Desktop Edition · v0.2.1</span>
     </div>
     <div class="tb-spacer" data-tauri-drag-region></div>
     <button class="tb-btn" id="tb-minimize" title="最小化">—</button>
@@ -220,7 +220,7 @@
             <div class="dash-pad">
                 <section class="hero-card">
                     <div class="hero-copy">
-                        <div class="eyebrow">矩龙破甲 · v0.2.0</div>
+                        <div class="eyebrow">矩龙破甲 · v0.2.1</div>
                         <h1>把每一次交互，<span>变成可控能力。</span></h1>
                         <p>本地代理、指令增强与 Skills 工作流集中管理。数据留在本机，状态一目了然。</p>
                         <div class="hero-actions">
@@ -445,9 +445,10 @@
         <div class="provider-restore-icon" aria-hidden="true">↺</div>
         <div class="modal-eyebrow">CLEAN CODEX ENVIRONMENT</div>
         <h2 id="provider-restore-title">还原 Codex 环境？</h2>
-        <p id="provider-restore-description">这会停止当前代理，并撤销本应用写入的本地配置，让 Codex 回到部署前状态。</p>
+        <p id="provider-restore-description">这会停止当前代理并执行配置管理中的还原配置，然后清空 Codex 配置与认证。</p>
         <ul class="provider-restore-list">
-            <li>恢复 config.toml 与应用改写前的 auth.json</li>
+            <li>执行“配置管理 · 部署操作 · 还原配置”</li>
+            <li>清空 config.toml，并将 auth.json 重置为 {}</li>
             <li>移除 bridge.md、relay_url.txt 与已部署清单</li>
             <li>清理本次部署的 Skills，保留用户原有文件</li>
         </ul>

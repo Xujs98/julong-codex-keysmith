@@ -10,6 +10,11 @@
 - 推送遇到网络错误时只自动重试一次；第二次仍失败则保留本地提交，并在交接或下一次任务中继续推送。
 - 不要覆盖或删除用户已有的未提交改动；提交前检查 `git status` 和 `git diff`。
 
+## 应用版本号
+
+- 每次更新 App 的代码、界面、配置或文档并准备提交时，必须递增补丁版本号（例如 `0.2.0` → `0.2.1`）。
+- 同步更新 `VERSION`、`inkos.json`、`package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`src-tauri/tauri.conf.json` 及前端界面中展示的版本号；提交前搜索旧版本，确认没有遗漏。
+
 ## 验证基线
 
 - 前端：`node --check frontend/app.js`
