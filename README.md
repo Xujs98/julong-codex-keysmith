@@ -49,6 +49,8 @@ julong-codex CLI ─┬─ start / stop / status ─▶ 复用同一套 DeployMa
 | M6 Monitor | ResponseInterceptor | 通过 Tauri 事件向前端推送实时交互数据和统计 |
 | Deploy | — | Codex config.toml 备份/修改/恢复，部署 bridge.md + skills/ |
 | Providers | — | 多供应商持久化、拖拽排序、测速/模型拉取、auth.json/config.toml 同步与异常自动切换 |
+| 多适配工作层 | AdapterRegistry | Codex、供应商、MCP、Skills 共用 detect → plan → preview → apply → verify → restore 生命周期 |
+| 指令边界档位 | InstructionProfiles | 标准、结构化工作流、扩展执行边界三档可选；设置写入 `super-instruct-instruction.json` |
 | CLI | — | `julong-codex start/stop/status`，与桌面端共享部署、停止、端口和健康检查逻辑 |
 | MCP Tools | — | 31 个配置驱动工具，支持 Local / WSL / Docker / SSH，带超时、输出上限和可用性检查 |
 
@@ -210,7 +212,20 @@ cargo build --manifest-path src-tauri/Cargo.toml --bin julong-codex
 src-tauri/target/debug/julong-codex start
 src-tauri/target/debug/julong-codex status
 src-tauri/target/debug/julong-codex stop
+
+# 查看或切换模型指令边界
+src-tauri/target/debug/julong-codex instruction list
+src-tauri/target/debug/julong-codex instruction set structured
+src-tauri/target/debug/julong-codex instruction show
+
+# 查看当前适配器注册表
+src-tauri/target/debug/julong-codex adapters
 ```
+
+配置管理页的“模型指令边界”提供三档选择：标准边界保持当前 bridge；结构化工作流引入
+`OBJECTIVE → CONTEXT → OUTPUT → CHECK`；扩展执行边界引入
+`OBJECTIVE → PLAN → APPLY → VERIFY → ROLLBACK`。档位只改变注入的工作链提示，不改变
+宿主工具权限。保存后点击“部署 bridge.md”或重启代理使其生效，启动流程会自动检测已部署档位。
 
 macOS Release 会将 CLI 放在 `矩龙破甲.app/Contents/MacOS/julong-codex`。需要全局命令时，可在安装 App 后创建软链接：
 

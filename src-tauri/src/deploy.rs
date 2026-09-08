@@ -47,6 +47,8 @@ pub struct DeployPreview {
     pub warnings: Vec<String>,
     pub selected_skills: usize,
     pub transaction_pending: bool,
+    pub instruction_profile: String,
+    pub instruction_profile_name: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -100,6 +102,14 @@ impl DeployManager {
 
     pub fn has_pending_transaction(&self) -> bool {
         transaction::has_pending(&self.codex_home)
+    }
+
+    /// 检查已部署 bridge 是否与当前指令边界配置一致。
+    pub fn instruction_profile_matches(&self, profile: &str) -> bool {
+        let bridge = self.codex_home.join("bridge.md");
+        fs::read_to_string(bridge)
+            .map(|content| crate::instruction::matches_rendered(&content, profile))
+            .unwrap_or(false)
     }
 
     /// 部署 bridge.md + skills 到 Codex，修改 base_url 指向代理
@@ -640,11 +650,16 @@ impl DeployManager {
     pub fn preview(&self, skills_dir: Option<&Path>) -> DeployPreview {
         let status = self.status();
         let selected_skills = selected_skill_ids(&self.codex_home, skills_dir).len();
+        let instruction_profile = crate::instruction::selected(&self.codex_home);
         let mut actions = vec![
             "保存 config.toml、bridge.md 与受影响 Skills 的事务快照".to_string(),
             "将 base_url 切换到本地代理 127.0.0.1:8080".to_string(),
             "部署 bridge.md 并按启用列表同步 Skills".to_string(),
             "写入带 SHA-256 的部署清单并清理事务日志".to_string(),
+            format!(
+                "使用指令边界：{}（{}）",
+                instruction_profile.name, instruction_profile.effect
+            ),
         ];
         let mut warnings = Vec::new();
         if status.transaction_pending {
@@ -664,6 +679,8 @@ impl DeployManager {
             warnings,
             selected_skills,
             transaction_pending: status.transaction_pending,
+            instruction_profile: instruction_profile.id.to_string(),
+            instruction_profile_name: instruction_profile.name.to_string(),
         }
     }
 }

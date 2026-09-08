@@ -1,0 +1,29 @@
+Instruction boundary integration verification
+
+1. cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+   exit=0
+
+2. cargo test --manifest-path src-tauri/Cargo.toml
+   exit=0
+   result: 30 passed; 0 failed
+
+3. python3 -m json.tool src-tauri/tauri.conf.json
+   exit=0
+   result: valid JSON
+
+4. node --check frontend/app.js
+   result: skipped; node executable is not installed in the current environment
+
+5. src-tauri/target/debug/julong-codex help
+   exit=0
+   result: instruction list/show/set and adapters commands are present
+
+6. src-tauri/target/debug/julong-codex adapters
+   exit=0
+   result: codex, provider, mcp, skills adapters listed with shared lifecycle
+
+7. git apply --check instruction-boundary.patch on a clean HEAD archive
+   exit=0
+
+8. sha256sum -c deliverables.sha256
+   exit=0

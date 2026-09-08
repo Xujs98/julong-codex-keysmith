@@ -1,10 +1,12 @@
 // Super-Instruct — Tauri 桌面应用入口
 // MITM Core 作为 Tauri 后端进程运行，前端通过事件系统接收实时数据
 
+pub mod adapters;
 pub mod cli;
 pub mod core;
 pub mod deploy;
 pub mod extensions;
+pub mod instruction;
 pub mod log;
 pub mod mcp_tools;
 pub mod providers;
@@ -205,6 +207,9 @@ pub fn run() {
             get_proxy_status,
             get_activity_status,
             get_codex_info,
+            get_adapters,
+            get_instruction_profiles,
+            set_instruction_profile,
             set_relay_url,
             get_tamper_rules,
             export_tamper_rules,
@@ -310,7 +315,7 @@ async fn start_proxy(
     let skills_sync_message = skills::sync_enabled_skills(&app)?;
 
     // 2. 读取 bridge.md — 文件查找失败时用编译期嵌入的 fallback
-    let instructions = match resolve_resource_file(&app, "bridge.md") {
+    let base_instructions = match resolve_resource_file(&app, "bridge.md") {
         Ok(path) => std::fs::read_to_string(&path).unwrap_or_else(|e| {
             tracing::warn!(
                 "start_proxy: read bridge.md failed ({}), using embedded fallback",
@@ -326,10 +331,20 @@ async fn start_proxy(
             BRIDGE_MD_FALLBACK.to_string()
         }
     };
+    let profile = instruction::selected(manager.codex_home());
+    let instructions = instruction::render(&base_instructions, profile.id)?;
+    tracing::info!(
+        "start_proxy: instruction boundary = {} ({})",
+        profile.id,
+        profile.name
+    );
 
     // 3. 部署 — bridge_active 不足以判断完整部署，需验证 bridge_exists 和 relay_url_valid
     let status = manager.status();
-    let needs_deploy = !status.bridge_active || !status.bridge_exists || !status.relay_url_valid;
+    let needs_deploy = !status.bridge_active
+        || !status.bridge_exists
+        || !status.relay_url_valid
+        || !manager.instruction_profile_matches(profile.id);
 
     if needs_deploy {
         tracing::info!(
@@ -586,7 +601,7 @@ async fn deploy_bridge(app: tauri::AppHandle) -> Result<String, String> {
     let manager = DeployManager::new().ok_or("Codex home not found")?;
     let skills_sync_message = skills::sync_enabled_skills(&app)?;
     // bridge.md: 文件查找优先，fallback 用编译期嵌入版本
-    let bridge_md = match resolve_resource_file(&app, "bridge.md") {
+    let base_bridge_md = match resolve_resource_file(&app, "bridge.md") {
         Ok(path) => std::fs::read_to_string(&path).unwrap_or_else(|e| {
             tracing::warn!(
                 "deploy_bridge: read bridge.md failed ({}), using embedded fallback",
@@ -602,6 +617,13 @@ async fn deploy_bridge(app: tauri::AppHandle) -> Result<String, String> {
             BRIDGE_MD_FALLBACK.to_string()
         }
     };
+    let profile = instruction::selected(manager.codex_home());
+    let bridge_md = instruction::render(&base_bridge_md, profile.id)?;
+    tracing::info!(
+        "deploy_bridge: instruction boundary = {} ({})",
+        profile.id,
+        profile.name
+    );
     // Skills 由管理页独立同步，部署事务只处理 bridge/config。
     let result = manager
         .apply_with_optional_skills(&bridge_md, None)
@@ -729,9 +751,42 @@ async fn get_codex_info() -> Result<serde_json::Value, String> {
     let relay = home
         .as_ref()
         .and_then(|path| providers::configured_relay_url(path));
+    let instruction_profile = home
+        .as_ref()
+        .map(|path| instruction::selected_id(path))
+        .unwrap_or_else(|| instruction::DEFAULT_PROFILE.to_string());
     Ok(serde_json::json!({
         "codex_home": home.map(|p| p.display().to_string()),
         "relay_url": relay,
+        "instruction_profile": instruction_profile,
+    }))
+}
+
+#[tauri::command]
+fn get_adapters() -> Vec<adapters::AdapterInfo> {
+    adapters::list()
+}
+
+#[tauri::command]
+fn get_instruction_profiles() -> Result<serde_json::Value, String> {
+    let selected = DeployManager::find_codex_home()
+        .map(|home| instruction::selected_id(&home))
+        .unwrap_or_else(|| instruction::DEFAULT_PROFILE.to_string());
+    Ok(serde_json::json!({
+        "selected": selected,
+        "profiles": instruction::list_profiles(),
+    }))
+}
+
+#[tauri::command]
+fn set_instruction_profile(profile: String) -> Result<serde_json::Value, String> {
+    let home = DeployManager::find_codex_home().ok_or("Codex home not found")?;
+    let selected = instruction::save(&home, profile.trim())?;
+    Ok(serde_json::json!({
+        "ok": true,
+        "selected": selected.id,
+        "name": selected.name,
+        "message": "指令边界已保存；重新部署或下次启动代理时生效",
     }))
 }
 
@@ -916,6 +971,9 @@ async fn get_deploy_status() -> Result<serde_json::Value, String> {
                 "transaction_pending": status.transaction_pending,
                 "integrity_ok": status.integrity_ok,
                 "deployment_id": status.deployment_id,
+                "instruction_profile": DeployManager::find_codex_home()
+                    .map(|home| instruction::selected_id(&home))
+                    .unwrap_or_else(|| instruction::DEFAULT_PROFILE.to_string()),
             }))
         }
         None => Ok(serde_json::json!({

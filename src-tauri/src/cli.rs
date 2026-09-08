@@ -3,12 +3,14 @@
 //! CLI 与桌面端共用 DeployManager、MitmCore、解析器和资源目录。桌面端继续
 //! 负责交互式 UI；CLI 负责可重复执行的 start/stop/status 和 MCP stdio 服务。
 
+use crate::adapters;
 use crate::core::MitmCore;
 use crate::deploy::DeployManager;
 use crate::extensions::inject::SystemPromptInjector;
 use crate::extensions::memory::MemoryKernel;
 use crate::extensions::sse_parser::UniversalSseParser;
 use crate::extensions::tamper::TamperEngine;
+use crate::instruction;
 use crate::mcp_tools::{load_catalog, run_mcp_stdio, ToolRunner, USER_CATALOG_FILE};
 use crate::providers;
 use crate::runtime;
@@ -29,6 +31,8 @@ pub fn run() -> i32 {
         Some("start") => command_start(),
         Some("stop") => command_stop(),
         Some("status") => command_status(),
+        Some("instruction") => command_instruction(&args[1..]),
+        Some("adapters") => command_adapters(),
         Some("mcp") => command_mcp(&args[1..]),
         Some("--proxy-daemon") => command_daemon(),
         Some("help") | Some("--help") | Some("-h") | None => {
@@ -50,6 +54,10 @@ fn print_help() {
     println!("  julong-codex start");
     println!("  julong-codex stop");
     println!("  julong-codex status");
+    println!("  julong-codex instruction list");
+    println!("  julong-codex instruction show");
+    println!("  julong-codex instruction set PROFILE");
+    println!("  julong-codex adapters");
     println!("  julong-codex mcp list [BACKEND_OPTIONS]");
     println!("  julong-codex mcp doctor [BACKEND_OPTIONS]");
     println!("  julong-codex mcp export");
@@ -71,7 +79,11 @@ fn command_start() -> i32 {
             let deployment_ok = DeployManager::new()
                 .map(|manager| {
                     let status = manager.status();
-                    status.bridge_active && status.integrity_ok && !status.transaction_pending
+                    let selected = instruction::selected(&manager.codex_home());
+                    status.bridge_active
+                        && status.integrity_ok
+                        && !status.transaction_pending
+                        && manager.instruction_profile_matches(selected.id)
                 })
                 .unwrap_or(false);
             if !deployment_ok {
@@ -93,9 +105,17 @@ fn command_start() -> i32 {
             return 1;
         }
     };
-    let bridge = resource_file("bridge.md")
+    let base_bridge = resource_file("bridge.md")
         .and_then(|path| std::fs::read_to_string(path).ok())
         .unwrap_or_else(|| BRIDGE_FALLBACK.to_string());
+    let selected_profile = instruction::selected(manager.codex_home());
+    let bridge = match instruction::render(&base_bridge, selected_profile.id) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("[FAIL] 指令边界配置无效: {error}");
+            return 1;
+        }
+    };
     let skills = resource_dir("codex-skills");
     if let Err(error) = manager.apply_with_optional_skills(&bridge, skills.as_deref()) {
         eprintln!("[FAIL] 部署失败: {error}");
@@ -191,27 +211,31 @@ fn command_stop() -> i32 {
 
 fn command_status() -> i32 {
     let manager = DeployManager::new();
-    let (home, deployed, backup, pending, integrity, relay) = if let Some(manager) = &manager {
-        let status = manager.status();
-        (
-            manager.codex_home().display().to_string(),
-            status.bridge_active,
-            status.config_backed_up,
-            status.transaction_pending,
-            status.integrity_ok,
-            providers::configured_relay_url(manager.codex_home())
-                .unwrap_or_else(|| "未检测到".into()),
-        )
-    } else {
-        (
-            "未检测到".into(),
-            false,
-            false,
-            false,
-            false,
-            "未检测到".into(),
-        )
-    };
+    let (home, deployed, backup, pending, integrity, relay, profile) =
+        if let Some(manager) = &manager {
+            let status = manager.status();
+            let selected = instruction::selected(manager.codex_home());
+            (
+                manager.codex_home().display().to_string(),
+                status.bridge_active,
+                status.config_backed_up,
+                status.transaction_pending,
+                status.integrity_ok,
+                providers::configured_relay_url(manager.codex_home())
+                    .unwrap_or_else(|| "未检测到".into()),
+                selected,
+            )
+        } else {
+            (
+                "未检测到".into(),
+                false,
+                false,
+                false,
+                false,
+                "未检测到".into(),
+                instruction::profile(instruction::DEFAULT_PROFILE).expect("default profile"),
+            )
+        };
     let pid = manager
         .as_ref()
         .and_then(|m| runtime::managed_proxy_pid(m.codex_home()));
@@ -240,10 +264,16 @@ fn command_status() -> i32 {
     );
     println!("transaction: {}", if pending { "PENDING" } else { "clean" });
     println!("relay: {relay}");
+    println!("instruction boundary: {} ({})", profile.id, profile.name);
     let consistent = manager.is_some()
         && !pending
         && if running {
-            deployed && integrity
+            deployed
+                && integrity
+                && manager
+                    .as_ref()
+                    .map(|m| m.instruction_profile_matches(profile.id))
+                    .unwrap_or(false)
         } else {
             !occupied && (!deployed || integrity)
         };
@@ -252,6 +282,82 @@ fn command_status() -> i32 {
     } else {
         1
     }
+}
+
+fn command_instruction(args: &[String]) -> i32 {
+    let action = args.first().map(String::as_str).unwrap_or("show");
+    let manager = DeployManager::new();
+    match action {
+        "list" => {
+            let selected = manager
+                .as_ref()
+                .map(|m| instruction::selected_id(m.codex_home()))
+                .unwrap_or_else(|| instruction::DEFAULT_PROFILE.to_string());
+            for item in instruction::list_profiles() {
+                println!(
+                    "{}\t{}\t{}{}",
+                    item.id,
+                    item.name,
+                    item.summary,
+                    if item.id == selected {
+                        " [selected]"
+                    } else {
+                        ""
+                    }
+                );
+            }
+            0
+        }
+        "show" => {
+            let Some(manager) = manager else {
+                eprintln!("[FAIL] Codex 配置目录未找到");
+                return 1;
+            };
+            let item = instruction::selected(manager.codex_home());
+            println!("{} ({})", item.id, item.name);
+            println!("{}", item.summary);
+            println!("stages: {}", item.stages.join(" -> "));
+            0
+        }
+        "set" => {
+            let Some(id) = args.get(1) else {
+                eprintln!("用法: julong-codex instruction set PROFILE");
+                return 2;
+            };
+            let Some(manager) = manager else {
+                eprintln!("[FAIL] Codex 配置目录未找到");
+                return 1;
+            };
+            match instruction::save(manager.codex_home(), id) {
+                Ok(item) => {
+                    println!("[OK] 指令边界已设置为 {} ({})", item.id, item.name);
+                    println!("[OK] 重新部署或下次启动代理时生效");
+                    0
+                }
+                Err(error) => {
+                    eprintln!("[FAIL] {error}");
+                    2
+                }
+            }
+        }
+        _ => {
+            eprintln!("未知 instruction 操作: {action}");
+            2
+        }
+    }
+}
+
+fn command_adapters() -> i32 {
+    for item in adapters::list() {
+        println!(
+            "{}\t{}\t{}\t{}",
+            item.id,
+            item.status,
+            item.name,
+            item.lifecycle.join(" -> ")
+        );
+    }
+    0
 }
 
 fn command_mcp(args: &[String]) -> i32 {
@@ -459,9 +565,11 @@ async fn run_headless_proxy() -> Result<(), String> {
     let manager = DeployManager::new().ok_or("Codex 配置目录未找到")?;
     let relay = providers::configured_relay_url(manager.codex_home())
         .ok_or("尚未配置供应商，请先设置中转站 URL")?;
-    let bridge = resource_file("bridge.md")
+    let base_bridge = resource_file("bridge.md")
         .and_then(|path| std::fs::read_to_string(path).ok())
         .unwrap_or_else(|| BRIDGE_FALLBACK.to_string());
+    let selected_profile = instruction::selected(manager.codex_home());
+    let bridge = instruction::render(&base_bridge, selected_profile.id)?;
     let memory = Arc::new(MemoryKernel::new(
         manager.codex_home().join("julong-memory.json"),
     ));

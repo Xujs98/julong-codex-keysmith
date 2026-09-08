@@ -1,0 +1,953 @@
+diff --git a/README.md b/README.md
+index 4e4724b..3ed397d 100644
+--- a/README.md
++++ b/README.md
+@@ -49,6 +49,8 @@ julong-codex CLI ─┬─ start / stop / status ─▶ 复用同一套 DeployMa
+ | M6 Monitor | ResponseInterceptor | 通过 Tauri 事件向前端推送实时交互数据和统计 |
+ | Deploy | — | Codex config.toml 备份/修改/恢复，部署 bridge.md + skills/ |
+ | Providers | — | 多供应商持久化、拖拽排序、测速/模型拉取、auth.json/config.toml 同步与异常自动切换 |
++| 多适配工作层 | AdapterRegistry | Codex、供应商、MCP、Skills 共用 detect → plan → preview → apply → verify → restore 生命周期 |
++| 指令边界档位 | InstructionProfiles | 标准、结构化工作流、扩展执行边界三档可选；设置写入 `super-instruct-instruction.json` |
+ | CLI | — | `julong-codex start/stop/status`，与桌面端共享部署、停止、端口和健康检查逻辑 |
+ | MCP Tools | — | 31 个配置驱动工具，支持 Local / WSL / Docker / SSH，带超时、输出上限和可用性检查 |
+
+@@ -210,8 +212,21 @@ cargo build --manifest-path src-tauri/Cargo.toml --bin julong-codex
+ src-tauri/target/debug/julong-codex start
+ src-tauri/target/debug/julong-codex status
+ src-tauri/target/debug/julong-codex stop
++
++# 查看或切换模型指令边界
++src-tauri/target/debug/julong-codex instruction list
++src-tauri/target/debug/julong-codex instruction set structured
++src-tauri/target/debug/julong-codex instruction show
++
++# 查看当前适配器注册表
++src-tauri/target/debug/julong-codex adapters
+ ```
+
++配置管理页的“模型指令边界”提供三档选择：标准边界保持当前 bridge；结构化工作流引入
++`OBJECTIVE → CONTEXT → OUTPUT → CHECK`；扩展执行边界引入
++`OBJECTIVE → PLAN → APPLY → VERIFY → ROLLBACK`。档位只改变注入的工作链提示，不改变
++宿主工具权限。保存后点击“部署 bridge.md”或重启代理使其生效，启动流程会自动检测已部署档位。
++
+ macOS Release 会将 CLI 放在 `矩龙破甲.app/Contents/MacOS/julong-codex`。需要全局命令时，可在安装 App 后创建软链接：
+
+ ```bash
+diff --git a/VERSION b/VERSION
+index 0c62199..ee1372d 100644
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-0.2.1
++0.2.2
+diff --git a/frontend/app.js b/frontend/app.js
+index d02bbc2..5c952eb 100644
+--- a/frontend/app.js
++++ b/frontend/app.js
+@@ -46,6 +46,9 @@ const el = {
+     cfgTransactionStatus: $('cfg-transaction-status'),
+     cfgMessage:    $('cfg-message'),
+     cfgMemoryCount: $('cfg-memory-count'),
++    instructionProfileGrid: $('instruction-profile-grid'),
++    instructionProfileNote: $('instruction-profile-note'),
++    adapterGrid: $('adapter-grid'),
+     stopConfirmEnabled: $('stop-confirm-enabled'),
+     stopConfirmEnabledLabel: $('stop-confirm-enabled-label'),
+     stopConfirmSeconds: $('stop-confirm-seconds'),
+@@ -709,6 +712,8 @@ async function refreshCodexInfo() {
+     try {
+         const info = await invoke('get_codex_info');
+         el.cfgCodexHome.textContent = info.codex_home ?? '未检测到';
++        await loadInstructionProfiles();
++        await loadAdapters();
+         await updateCurrentProviderLabels();
+
+         if (info.codex_home) {
+@@ -729,12 +734,82 @@ async function refreshCodexInfo() {
+     }
+ }
+
++async function loadInstructionProfiles() {
++    if (!el.instructionProfileGrid) return;
++    try {
++        const result = await invoke('get_instruction_profiles');
++        const profiles = result?.profiles || [];
++        const selected = result?.selected || 'standard';
++        el.instructionProfileGrid.replaceChildren();
++        profiles.forEach(profile => {
++            const button = document.createElement('button');
++            button.type = 'button';
++            button.className = `instruction-profile-card${profile.id === selected ? ' active' : ''}`;
++            button.dataset.profile = profile.id;
++            button.setAttribute('role', 'radio');
++            button.setAttribute('aria-checked', String(profile.id === selected));
++            const title = document.createElement('strong');
++            title.textContent = profile.name;
++            const summary = document.createElement('span');
++            summary.textContent = profile.summary;
++            const stages = document.createElement('small');
++            stages.textContent = (profile.stages || []).join(' → ');
++            const mark = document.createElement('i');
++            mark.setAttribute('aria-hidden', 'true');
++            mark.textContent = profile.id === selected ? '✓' : '';
++            button.append(title, summary, stages, mark);
++            button.addEventListener('click', () => selectInstructionProfile(profile.id));
++            el.instructionProfileGrid.appendChild(button);
++        });
++        const current = profiles.find(item => item.id === selected);
++        if (current && el.instructionProfileNote) {
++            el.instructionProfileNote.textContent = `${current.name}：${current.effect}。保存后重新部署或重启代理生效。`;
++        }
++    } catch (e) {
++        if (el.instructionProfileNote) el.instructionProfileNote.textContent = `读取指令边界失败：${e}`;
++    }
++}
++
++async function selectInstructionProfile(profileId) {
++    try {
++        const result = await invoke('set_instruction_profile', { profile: profileId });
++        showConfigMessage(result?.message || '指令边界已保存', 'ok');
++        await loadInstructionProfiles();
++    } catch (e) {
++        showConfigMessage(String(e), 'err');
++    }
++}
++
++async function loadAdapters() {
++    if (!el.adapterGrid) return;
++    try {
++        const adapters = await invoke('get_adapters');
++        el.adapterGrid.replaceChildren();
++        (adapters || []).forEach(adapter => {
++            const card = document.createElement('article');
++            card.className = 'adapter-card';
++            const title = document.createElement('strong');
++            title.textContent = adapter.name;
++            const description = document.createElement('span');
++            description.textContent = adapter.description;
++            const lifecycle = document.createElement('small');
++            lifecycle.textContent = (adapter.lifecycle || []).join(' → ');
++            const status = document.createElement('i');
++            status.textContent = adapter.status === 'active' ? 'ACTIVE' : String(adapter.status || '').toUpperCase();
++            card.append(title, description, lifecycle, status);
++            el.adapterGrid.appendChild(card);
++        });
++    } catch (e) {
++        el.adapterGrid.textContent = `读取适配器失败：${e}`;
++    }
++}
++
+ el.btnRefresh.addEventListener('click', refreshCodexInfo);
+
+ async function deployWithPreview() {
+     try {
+         const preview = await invoke('preview_deployment');
+-        $('preview-state').textContent = `当前状态：${preview.state} · ${preview.selected_skills} 个 Skills`;
++        $('preview-state').textContent = `当前状态：${preview.state} · ${preview.selected_skills} 个 Skills · 指令边界：${preview.instruction_profile_name || preview.instruction_profile || '标准边界'}`;
+         const actions = (preview.actions || []).map(x => `<div class="preflight-item"><span class="preflight-icon">＋</span><span>将执行</span><span class="preflight-detail">${escapeHtml(x)}</span></div>`);
+         const warnings = (preview.warnings || []).map(x => `<div class="preflight-item fail"><span class="preflight-icon">!</span><span>提醒</span><span class="preflight-detail">${escapeHtml(x)}</span></div>`);
+         $('preview-list').innerHTML = actions.concat(warnings).join('');
+diff --git a/frontend/index.html b/frontend/index.html
+index 65d930b..10ad0fa 100644
+--- a/frontend/index.html
++++ b/frontend/index.html
+@@ -3,7 +3,7 @@
+ <head>
+     <meta charset="UTF-8">
+     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+-    <title>矩龙破甲 · v0.2.1</title>
++    <title>矩龙破甲 · v0.2.2</title>
+     <link rel="stylesheet" href="styles.css">
+     <script type="module" src="app.js"></script>
+ </head>
+@@ -14,7 +14,7 @@
+     <div class="tb-logo" data-tauri-drag-region>
+         <img class="tb-logo-image" src="assets/molong-logo.png" alt="矩龙破甲" data-tauri-drag-region>
+         <span class="tb-logo-text" data-tauri-drag-region>矩龙破甲</span>
+-        <span class="tb-logo-sub" data-tauri-drag-region>Desktop Edition · v0.2.1</span>
++        <span class="tb-logo-sub" data-tauri-drag-region>Desktop Edition · v0.2.2</span>
+     </div>
+     <div class="tb-spacer" data-tauri-drag-region></div>
+     <button class="tb-btn" id="tb-minimize" title="最小化">—</button>
+@@ -220,7 +220,7 @@
+             <div class="dash-pad">
+                 <section class="hero-card">
+                     <div class="hero-copy">
+-                        <div class="eyebrow">矩龙破甲 · v0.2.1</div>
++                        <div class="eyebrow">矩龙破甲 · v0.2.2</div>
+                         <h1>把每一次交互，<span>变成可控能力。</span></h1>
+                         <p>本地代理、指令增强与 Skills 工作流集中管理。数据留在本机，状态一目了然。</p>
+                         <div class="hero-actions">
+@@ -315,6 +315,17 @@
+                         <button class="theme-card" data-theme="aurora"><span class="theme-swatch aurora"></span><span><strong>极光</strong><small>夜航 · 灵动</small></span><i></i></button>
+                     </div>
+                 </div>
++                <div class="cfg-block instruction-boundary-block">
++                    <div class="cfg-block-head">模型指令边界</div>
++                    <p class="cfg-block-hint">选择 TARGET 风格工作流的开放程度；仅影响注入的工作链提示，不会扩大宿主工具权限。</p>
++                    <div class="instruction-profile-grid" id="instruction-profile-grid" role="radiogroup" aria-label="模型指令边界"></div>
++                    <div class="instruction-profile-note" id="instruction-profile-note" aria-live="polite">读取配置中…</div>
++                </div>
++                <div class="cfg-block adapter-block">
++                    <div class="cfg-block-head">多适配工作层</div>
++                    <p class="cfg-block-hint">统一使用 detect → plan → preview → apply → verify → restore 生命周期。</p>
++                    <div class="adapter-grid" id="adapter-grid" aria-live="polite"></div>
++                </div>
+                 <div class="cfg-block stop-settings-block">
+                     <div class="cfg-block-head">停止代理确认</div>
+                     <div class="stop-settings-row">
+diff --git a/frontend/styles.css b/frontend/styles.css
+index 8292276..7ddb24c 100644
+--- a/frontend/styles.css
++++ b/frontend/styles.css
+@@ -138,6 +138,7 @@ body.modal-open{overflow:hidden}
+ .theme-block{padding:14px 16px}
+ .theme-block .cfg-block-head{margin-bottom:10px}
+ .theme-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
++.instruction-boundary-block .cfg-block-head{margin-bottom:6px}.cfg-block-hint{margin:0 0 12px;color:var(--ink-soft);font-size:11px;line-height:1.5}.instruction-profile-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.instruction-profile-card{min-height:112px;padding:12px;display:flex;flex-direction:column;align-items:flex-start;gap:5px;position:relative;text-align:left;border:1px solid var(--control-border);border-radius:12px;background:var(--surface-soft);color:var(--ink);cursor:pointer;transition:.16s ease}.instruction-profile-card:hover{border-color:var(--accent-main);transform:translateY(-1px)}.instruction-profile-card.active{border-color:var(--accent-main);box-shadow:0 0 0 2px var(--accent-ring);background:var(--accent-soft)}.instruction-profile-card strong{font-size:12px}.instruction-profile-card span{color:var(--ink-soft);font-size:10px;line-height:1.45}.instruction-profile-card small{margin-top:auto;color:var(--accent-strong);font-size:9px;letter-spacing:.02em}.instruction-profile-card i{position:absolute;top:10px;right:10px;width:18px;height:18px;display:grid;place-items:center;border:1px solid var(--control-border);border-radius:50%;color:transparent;font-style:normal;font-size:11px}.instruction-profile-card.active i{border:0;background:var(--accent-main);color:#fff}.instruction-profile-note{margin-top:10px;color:var(--ink-faint);font-size:10px;line-height:1.5}.adapter-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.adapter-card{min-height:92px;padding:11px 12px;display:flex;flex-direction:column;gap:5px;position:relative;border:1px solid var(--control-border);border-radius:11px;background:var(--surface-soft)}.adapter-card strong{padding-right:46px;color:var(--ink);font-size:11px}.adapter-card span{color:var(--ink-soft);font-size:10px;line-height:1.45}.adapter-card small{margin-top:auto;color:var(--ink-faint);font-size:8px;letter-spacing:.02em}.adapter-card i{position:absolute;top:10px;right:10px;color:var(--success);font-size:8px;font-style:normal;font-weight:750;letter-spacing:.08em}
+ .theme-card{height:54px;padding:7px 9px;gap:9px;border-radius:12px}
+ .theme-card strong{font-size:11.5px;line-height:1.15}
+ .theme-card small{margin-top:2px;font-size:8.5px}
+@@ -349,6 +350,8 @@ body.modal-open{overflow:hidden}
+ @media (max-width:760px){
+   .mcp-summary-grid{grid-template-columns:1fr}.mcp-guide{align-items:flex-start;flex-direction:column}.mcp-guide-actions{max-width:100%;width:100%;flex-wrap:wrap}.mcp-guide code{max-width:100%;width:100%}
+   .theme-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
++  .instruction-profile-grid{grid-template-columns:1fr}
++  .adapter-grid{grid-template-columns:1fr}
+   .provider-card{grid-template-columns:20px 40px minmax(0,1fr);gap:9px}
+   .provider-avatar{width:40px;height:40px}
+   .provider-actions{grid-column:2/-1;justify-content:flex-start;overflow:auto;padding-top:3px}
+diff --git a/inkos.json b/inkos.json
+index 3c9f5f5..fc6fd53 100644
+--- a/inkos.json
++++ b/inkos.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "矩龙破甲",
+-  "version": "0.2.1",
++  "version": "0.2.2",
+   "language": "zh",
+   "llm": {
+     "provider": "openai",
+diff --git a/package-lock.json b/package-lock.json
+index 5ceb14c..2c3cbdc 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "julong-codex-keysmith",
+-  "version": "0.2.1",
++  "version": "0.2.2",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "julong-codex-keysmith",
+-      "version": "0.2.1",
++      "version": "0.2.2",
+       "devDependencies": {
+         "@tauri-apps/cli": "^2"
+       }
+diff --git a/package.json b/package.json
+index 734903d..6245229 100644
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "julong-codex-keysmith",
+-  "version": "0.2.1",
++  "version": "0.2.2",
+   "scripts": {
+     "tauri": "tauri",
+     "prepare-sidecar": "node scripts/prepare-sidecar.mjs",
+diff --git a/src-tauri/Cargo.lock b/src-tauri/Cargo.lock
+index f0daec4..476fa7d 100644
+--- a/src-tauri/Cargo.lock
++++ b/src-tauri/Cargo.lock
+@@ -2012,7 +2012,7 @@ dependencies = [
+
+ [[package]]
+ name = "julong-codex-keysmith"
+-version = "0.2.1"
++version = "0.2.2"
+ dependencies = [
+  "axum",
+  "bytes",
+diff --git a/src-tauri/Cargo.toml b/src-tauri/Cargo.toml
+index 498feb7..f668d3b 100644
+--- a/src-tauri/Cargo.toml
++++ b/src-tauri/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "julong-codex-keysmith"
+-version = "0.2.1"
++version = "0.2.2"
+ edition = "2021"
+ default-run = "julong-codex-keysmith"
+
+diff --git a/src-tauri/src/adapters.rs b/src-tauri/src/adapters.rs
+new file mode 100644
+index 0000000..05a6fd5
+--- /dev/null
++++ b/src-tauri/src/adapters.rs
+@@ -0,0 +1,63 @@
++//! 多目标适配器注册表。
++//!
++//! 适配器描述公共生命周期；实际文件操作继续由 DeployManager、providers、
++//! mcp_tools 和 skills 模块完成。这样新增目标时只需增加注册项和实现，不改代理核心。
++
++use serde::Serialize;
++
++#[derive(Clone, Debug, Serialize)]
++pub struct AdapterInfo {
++    pub id: &'static str,
++    pub name: &'static str,
++    pub description: &'static str,
++    pub lifecycle: &'static [&'static str],
++    pub status: &'static str,
++}
++
++const LIFECYCLE: &[&str] = &["detect", "plan", "preview", "apply", "verify", "restore"];
++
++pub fn list() -> Vec<AdapterInfo> {
++    vec![
++        AdapterInfo {
++            id: "codex",
++            name: "Codex 配置适配器",
++            description: "bridge、config.toml 与 Skills 的事务部署。",
++            lifecycle: LIFECYCLE,
++            status: "active",
++        },
++        AdapterInfo {
++            id: "provider",
++            name: "供应商适配器",
++            description: "auth.json、provider 配置和运行时切换。",
++            lifecycle: LIFECYCLE,
++            status: "active",
++        },
++        AdapterInfo {
++            id: "mcp",
++            name: "MCP 工具适配器",
++            description: "工具目录、后端探测、启停和导出。",
++            lifecycle: LIFECYCLE,
++            status: "active",
++        },
++        AdapterInfo {
++            id: "skills",
++            name: "Skills 适配器",
++            description: "技能扫描、启用偏好、清单和增量同步。",
++            lifecycle: LIFECYCLE,
++            status: "active",
++        },
++    ]
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn registry_has_unique_ids_and_common_lifecycle() {
++        let items = list();
++        let ids: std::collections::BTreeSet<_> = items.iter().map(|item| item.id).collect();
++        assert_eq!(ids.len(), items.len());
++        assert!(items.iter().all(|item| item.lifecycle == LIFECYCLE));
++    }
++}
+diff --git a/src-tauri/src/cli.rs b/src-tauri/src/cli.rs
+index 7e659d0..e118ac2 100644
+--- a/src-tauri/src/cli.rs
++++ b/src-tauri/src/cli.rs
+@@ -3,12 +3,14 @@
+ //! CLI 与桌面端共用 DeployManager、MitmCore、解析器和资源目录。桌面端继续
+ //! 负责交互式 UI；CLI 负责可重复执行的 start/stop/status 和 MCP stdio 服务。
+
++use crate::adapters;
+ use crate::core::MitmCore;
+ use crate::deploy::DeployManager;
+ use crate::extensions::inject::SystemPromptInjector;
+ use crate::extensions::memory::MemoryKernel;
+ use crate::extensions::sse_parser::UniversalSseParser;
+ use crate::extensions::tamper::TamperEngine;
++use crate::instruction;
+ use crate::mcp_tools::{load_catalog, run_mcp_stdio, ToolRunner, USER_CATALOG_FILE};
+ use crate::providers;
+ use crate::runtime;
+@@ -29,6 +31,8 @@ pub fn run() -> i32 {
+         Some("start") => command_start(),
+         Some("stop") => command_stop(),
+         Some("status") => command_status(),
++        Some("instruction") => command_instruction(&args[1..]),
++        Some("adapters") => command_adapters(),
+         Some("mcp") => command_mcp(&args[1..]),
+         Some("--proxy-daemon") => command_daemon(),
+         Some("help") | Some("--help") | Some("-h") | None => {
+@@ -50,6 +54,10 @@ fn print_help() {
+     println!("  julong-codex start");
+     println!("  julong-codex stop");
+     println!("  julong-codex status");
++    println!("  julong-codex instruction list");
++    println!("  julong-codex instruction show");
++    println!("  julong-codex instruction set PROFILE");
++    println!("  julong-codex adapters");
+     println!("  julong-codex mcp list [BACKEND_OPTIONS]");
+     println!("  julong-codex mcp doctor [BACKEND_OPTIONS]");
+     println!("  julong-codex mcp export");
+@@ -71,7 +79,11 @@ fn command_start() -> i32 {
+             let deployment_ok = DeployManager::new()
+                 .map(|manager| {
+                     let status = manager.status();
+-                    status.bridge_active && status.integrity_ok && !status.transaction_pending
++                    let selected = instruction::selected(&manager.codex_home());
++                    status.bridge_active
++                        && status.integrity_ok
++                        && !status.transaction_pending
++                        && manager.instruction_profile_matches(selected.id)
+                 })
+                 .unwrap_or(false);
+             if !deployment_ok {
+@@ -93,9 +105,17 @@ fn command_start() -> i32 {
+             return 1;
+         }
+     };
+-    let bridge = resource_file("bridge.md")
++    let base_bridge = resource_file("bridge.md")
+         .and_then(|path| std::fs::read_to_string(path).ok())
+         .unwrap_or_else(|| BRIDGE_FALLBACK.to_string());
++    let selected_profile = instruction::selected(manager.codex_home());
++    let bridge = match instruction::render(&base_bridge, selected_profile.id) {
++        Ok(value) => value,
++        Err(error) => {
++            eprintln!("[FAIL] 指令边界配置无效: {error}");
++            return 1;
++        }
++    };
+     let skills = resource_dir("codex-skills");
+     if let Err(error) = manager.apply_with_optional_skills(&bridge, skills.as_deref()) {
+         eprintln!("[FAIL] 部署失败: {error}");
+@@ -191,27 +211,31 @@ fn command_stop() -> i32 {
+
+ fn command_status() -> i32 {
+     let manager = DeployManager::new();
+-    let (home, deployed, backup, pending, integrity, relay) = if let Some(manager) = &manager {
+-        let status = manager.status();
+-        (
+-            manager.codex_home().display().to_string(),
+-            status.bridge_active,
+-            status.config_backed_up,
+-            status.transaction_pending,
+-            status.integrity_ok,
+-            providers::configured_relay_url(manager.codex_home())
+-                .unwrap_or_else(|| "未检测到".into()),
+-        )
+-    } else {
+-        (
+-            "未检测到".into(),
+-            false,
+-            false,
+-            false,
+-            false,
+-            "未检测到".into(),
+-        )
+-    };
++    let (home, deployed, backup, pending, integrity, relay, profile) =
++        if let Some(manager) = &manager {
++            let status = manager.status();
++            let selected = instruction::selected(manager.codex_home());
++            (
++                manager.codex_home().display().to_string(),
++                status.bridge_active,
++                status.config_backed_up,
++                status.transaction_pending,
++                status.integrity_ok,
++                providers::configured_relay_url(manager.codex_home())
++                    .unwrap_or_else(|| "未检测到".into()),
++                selected,
++            )
++        } else {
++            (
++                "未检测到".into(),
++                false,
++                false,
++                false,
++                false,
++                "未检测到".into(),
++                instruction::profile(instruction::DEFAULT_PROFILE).expect("default profile"),
++            )
++        };
+     let pid = manager
+         .as_ref()
+         .and_then(|m| runtime::managed_proxy_pid(m.codex_home()));
+@@ -240,10 +264,16 @@ fn command_status() -> i32 {
+     );
+     println!("transaction: {}", if pending { "PENDING" } else { "clean" });
+     println!("relay: {relay}");
++    println!("instruction boundary: {} ({})", profile.id, profile.name);
+     let consistent = manager.is_some()
+         && !pending
+         && if running {
+-            deployed && integrity
++            deployed
++                && integrity
++                && manager
++                    .as_ref()
++                    .map(|m| m.instruction_profile_matches(profile.id))
++                    .unwrap_or(false)
+         } else {
+             !occupied && (!deployed || integrity)
+         };
+@@ -254,6 +284,82 @@ fn command_status() -> i32 {
+     }
+ }
+
++fn command_instruction(args: &[String]) -> i32 {
++    let action = args.first().map(String::as_str).unwrap_or("show");
++    let manager = DeployManager::new();
++    match action {
++        "list" => {
++            let selected = manager
++                .as_ref()
++                .map(|m| instruction::selected_id(m.codex_home()))
++                .unwrap_or_else(|| instruction::DEFAULT_PROFILE.to_string());
++            for item in instruction::list_profiles() {
++                println!(
++                    "{}\t{}\t{}{}",
++                    item.id,
++                    item.name,
++                    item.summary,
++                    if item.id == selected {
++                        " [selected]"
++                    } else {
++                        ""
++                    }
++                );
++            }
++            0
++        }
++        "show" => {
++            let Some(manager) = manager else {
++                eprintln!("[FAIL] Codex 配置目录未找到");
++                return 1;
++            };
++            let item = instruction::selected(manager.codex_home());
++            println!("{} ({})", item.id, item.name);
++            println!("{}", item.summary);
++            println!("stages: {}", item.stages.join(" -> "));
++            0
++        }
++        "set" => {
++            let Some(id) = args.get(1) else {
++                eprintln!("用法: julong-codex instruction set PROFILE");
++                return 2;
++            };
++            let Some(manager) = manager else {
++                eprintln!("[FAIL] Codex 配置目录未找到");
++                return 1;
++            };
++            match instruction::save(manager.codex_home(), id) {
++                Ok(item) => {
++                    println!("[OK] 指令边界已设置为 {} ({})", item.id, item.name);
++                    println!("[OK] 重新部署或下次启动代理时生效");
++                    0
++                }
++                Err(error) => {
++                    eprintln!("[FAIL] {error}");
++                    2
++                }
++            }
++        }
++        _ => {
++            eprintln!("未知 instruction 操作: {action}");
++            2
++        }
++    }
++}
++
++fn command_adapters() -> i32 {
++    for item in adapters::list() {
++        println!(
++            "{}\t{}\t{}\t{}",
++            item.id,
++            item.status,
++            item.name,
++            item.lifecycle.join(" -> ")
++        );
++    }
++    0
++}
++
+ fn command_mcp(args: &[String]) -> i32 {
+     let action = args.first().map(String::as_str).unwrap_or("list");
+     let backend = option_value(args, "--backend");
+@@ -459,9 +565,11 @@ async fn run_headless_proxy() -> Result<(), String> {
+     let manager = DeployManager::new().ok_or("Codex 配置目录未找到")?;
+     let relay = providers::configured_relay_url(manager.codex_home())
+         .ok_or("尚未配置供应商，请先设置中转站 URL")?;
+-    let bridge = resource_file("bridge.md")
++    let base_bridge = resource_file("bridge.md")
+         .and_then(|path| std::fs::read_to_string(path).ok())
+         .unwrap_or_else(|| BRIDGE_FALLBACK.to_string());
++    let selected_profile = instruction::selected(manager.codex_home());
++    let bridge = instruction::render(&base_bridge, selected_profile.id)?;
+     let memory = Arc::new(MemoryKernel::new(
+         manager.codex_home().join("julong-memory.json"),
+     ));
+diff --git a/src-tauri/src/deploy.rs b/src-tauri/src/deploy.rs
+index 0741e93..72160ce 100644
+--- a/src-tauri/src/deploy.rs
++++ b/src-tauri/src/deploy.rs
+@@ -47,6 +47,8 @@ pub struct DeployPreview {
+     pub warnings: Vec<String>,
+     pub selected_skills: usize,
+     pub transaction_pending: bool,
++    pub instruction_profile: String,
++    pub instruction_profile_name: String,
+ }
+
+ #[derive(Clone, Serialize, Deserialize)]
+@@ -102,6 +104,14 @@ impl DeployManager {
+         transaction::has_pending(&self.codex_home)
+     }
+
++    /// 检查已部署 bridge 是否与当前指令边界配置一致。
++    pub fn instruction_profile_matches(&self, profile: &str) -> bool {
++        let bridge = self.codex_home.join("bridge.md");
++        fs::read_to_string(bridge)
++            .map(|content| crate::instruction::matches_rendered(&content, profile))
++            .unwrap_or(false)
++    }
++
+     /// 部署 bridge.md + skills 到 Codex，修改 base_url 指向代理
+     pub fn apply(&self, bridge_md: &str, skills_dir: &Path) -> Result<String, String> {
+         self.apply_with_optional_skills(bridge_md, Some(skills_dir))
+@@ -640,11 +650,16 @@ impl DeployManager {
+     pub fn preview(&self, skills_dir: Option<&Path>) -> DeployPreview {
+         let status = self.status();
+         let selected_skills = selected_skill_ids(&self.codex_home, skills_dir).len();
++        let instruction_profile = crate::instruction::selected(&self.codex_home);
+         let mut actions = vec![
+             "保存 config.toml、bridge.md 与受影响 Skills 的事务快照".to_string(),
+             "将 base_url 切换到本地代理 127.0.0.1:8080".to_string(),
+             "部署 bridge.md 并按启用列表同步 Skills".to_string(),
+             "写入带 SHA-256 的部署清单并清理事务日志".to_string(),
++            format!(
++                "使用指令边界：{}（{}）",
++                instruction_profile.name, instruction_profile.effect
++            ),
+         ];
+         let mut warnings = Vec::new();
+         if status.transaction_pending {
+@@ -664,6 +679,8 @@ impl DeployManager {
+             warnings,
+             selected_skills,
+             transaction_pending: status.transaction_pending,
++            instruction_profile: instruction_profile.id.to_string(),
++            instruction_profile_name: instruction_profile.name.to_string(),
+         }
+     }
+ }
+diff --git a/src-tauri/src/instruction.rs b/src-tauri/src/instruction.rs
+new file mode 100644
+index 0000000..203f22e
+--- /dev/null
++++ b/src-tauri/src/instruction.rs
+@@ -0,0 +1,152 @@
++//! 指令边界配置与 TARGET 风格工作流适配。
++//!
++//! 该模块只负责选择和渲染指令配置，不改变代理核心的请求/响应管道。
++//! 配置写入 Codex home，CLI、桌面端和启动流程共享同一份状态。
++
++use serde::{Deserialize, Serialize};
++use std::fs;
++use std::path::{Path, PathBuf};
++
++pub const SETTINGS_FILE: &str = "super-instruct-instruction.json";
++pub const DEFAULT_PROFILE: &str = "standard";
++const PROFILE_MARKER_PREFIX: &str = "<!-- super-instruct-instruction-profile:";
++
++#[derive(Clone, Debug, Serialize)]
++pub struct InstructionProfile {
++    pub id: &'static str,
++    pub name: &'static str,
++    pub summary: &'static str,
++    pub stages: &'static [&'static str],
++    pub effect: &'static str,
++}
++
++#[derive(Clone, Debug, Serialize, Deserialize)]
++struct InstructionSettings {
++    #[serde(default = "default_profile")]
++    profile: String,
++}
++
++fn default_profile() -> String {
++    DEFAULT_PROFILE.to_string()
++}
++
++fn profiles() -> [InstructionProfile; 3] {
++    [
++        InstructionProfile {
++            id: "standard",
++            name: "标准边界",
++            summary: "保留当前 bridge.md 指令集，不额外追加工作流约束。",
++            stages: &["原始指令"],
++            effect: "变更最少，适合验证现有行为",
++        },
++        InstructionProfile {
++            id: "structured",
++            name: "结构化工作流",
++            summary: "借鉴 TARGET 的四段工作链：目标、上下文、产物、检查。",
++            stages: &["OBJECTIVE", "CONTEXT", "OUTPUT", "CHECK"],
++            effect: "输出更稳定，优先生成可检查的工件",
++        },
++        InstructionProfile {
++            id: "expanded",
++            name: "扩展执行边界",
++            summary: "加入直接工作单、适配器步骤和部署闭环提示。",
++            stages: &["OBJECTIVE", "PLAN", "APPLY", "VERIFY", "ROLLBACK"],
++            effect: "更少空转，更倾向直接完成已明确的本地任务",
++        },
++    ]
++}
++
++pub fn list_profiles() -> Vec<InstructionProfile> {
++    profiles().into_iter().collect()
++}
++
++pub fn profile(id: &str) -> Option<InstructionProfile> {
++    profiles().into_iter().find(|item| item.id == id)
++}
++
++pub fn settings_path(home: &Path) -> PathBuf {
++    home.join(SETTINGS_FILE)
++}
++
++pub fn selected_id(home: &Path) -> String {
++    let path = settings_path(home);
++    fs::read_to_string(path)
++        .ok()
++        .and_then(|content| serde_json::from_str::<InstructionSettings>(&content).ok())
++        .and_then(|settings| profile(&settings.profile).map(|_| settings.profile))
++        .unwrap_or_else(|| DEFAULT_PROFILE.to_string())
++}
++
++pub fn selected(home: &Path) -> InstructionProfile {
++    profile(&selected_id(home)).expect("default instruction profile must exist")
++}
++
++pub fn save(home: &Path, id: &str) -> Result<InstructionProfile, String> {
++    let selected = profile(id).ok_or_else(|| format!("未知指令边界配置: {id}"))?;
++    fs::create_dir_all(home).map_err(|e| format!("创建配置目录失败: {e}"))?;
++    let path = settings_path(home);
++    let pending = home.join(format!(".{SETTINGS_FILE}.tmp"));
++    let payload = serde_json::to_vec_pretty(&InstructionSettings {
++        profile: id.to_string(),
++    })
++    .map_err(|e| format!("序列化指令配置失败: {e}"))?;
++    fs::write(&pending, payload).map_err(|e| format!("写入指令配置失败: {e}"))?;
++    fs::rename(&pending, &path)
++        .or_else(|_| {
++            fs::copy(&pending, &path)
++                .map(|_| ())
++                .and_then(|_| fs::remove_file(&pending))
++        })
++        .map_err(|e| format!("发布指令配置失败: {e}"))?;
++    Ok(selected)
++}
++
++/// 将所选边界附加到基础 bridge。模板保持短小，避免复制整个技能目录。
++pub fn render(base: &str, id: &str) -> Result<String, String> {
++    let selected = profile(id).ok_or_else(|| format!("未知指令边界配置: {id}"))?;
++    if selected.id == DEFAULT_PROFILE {
++        return Ok(base.to_string());
++    }
++    let stages = selected.stages.join(" -> ");
++    let block = format!(
++        "\n\n{PROFILE_MARKER_PREFIX}{id} -->\n## 工作边界配置 · {}\n\n{}\n\n工作链：{}\n{}\n- 保留用户目标、格式和完成判据。\n- 缺失字段使用紧凑占位符，并明确列出假设。\n- 先产出计划或工件，再给检查结果和回滚路径。\n- 仅使用宿主实际提供的工具和目录；不伪造执行结果。\n",
++        selected.name, selected.summary, stages, selected.effect, id = selected.id
++    );
++    Ok(format!("{}{}", base.trim_end(), block))
++}
++
++pub fn matches_rendered(base: &str, id: &str) -> bool {
++    if id == DEFAULT_PROFILE {
++        return !base.contains(PROFILE_MARKER_PREFIX);
++    }
++    base.contains(&format!("{PROFILE_MARKER_PREFIX}{id} -->"))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn profiles_are_stable_and_rendered() {
++        assert_eq!(list_profiles().len(), 3);
++        let base = "bridge";
++        assert_eq!(render(base, DEFAULT_PROFILE).unwrap(), base);
++        let expanded = render(base, "expanded").unwrap();
++        assert!(expanded.contains("OBJECTIVE -> PLAN -> APPLY -> VERIFY -> ROLLBACK"));
++        assert!(matches_rendered(&expanded, "expanded"));
++        assert!(!matches_rendered(base, "expanded"));
++        assert!(matches_rendered(base, "standard"));
++    }
++
++    #[test]
++    fn settings_round_trip_uses_atomic_replace() {
++        let root = std::env::temp_dir().join(format!(
++            "julong-instruction-settings-{}",
++            uuid::Uuid::new_v4().simple()
++        ));
++        let saved = save(&root, "structured").unwrap();
++        assert_eq!(saved.id, "structured");
++        assert_eq!(selected_id(&root), "structured");
++        let _ = fs::remove_dir_all(root);
++    }
++}
+diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
+index 260f15f..a9abafc 100644
+--- a/src-tauri/src/lib.rs
++++ b/src-tauri/src/lib.rs
+@@ -1,10 +1,12 @@
+ // Super-Instruct — Tauri 桌面应用入口
+ // MITM Core 作为 Tauri 后端进程运行，前端通过事件系统接收实时数据
+
++pub mod adapters;
+ pub mod cli;
+ pub mod core;
+ pub mod deploy;
+ pub mod extensions;
++pub mod instruction;
+ pub mod log;
+ pub mod mcp_tools;
+ pub mod providers;
+@@ -205,6 +207,9 @@ pub fn run() {
+             get_proxy_status,
+             get_activity_status,
+             get_codex_info,
++            get_adapters,
++            get_instruction_profiles,
++            set_instruction_profile,
+             set_relay_url,
+             get_tamper_rules,
+             export_tamper_rules,
+@@ -310,7 +315,7 @@ async fn start_proxy(
+     let skills_sync_message = skills::sync_enabled_skills(&app)?;
+
+     // 2. 读取 bridge.md — 文件查找失败时用编译期嵌入的 fallback
+-    let instructions = match resolve_resource_file(&app, "bridge.md") {
++    let base_instructions = match resolve_resource_file(&app, "bridge.md") {
+         Ok(path) => std::fs::read_to_string(&path).unwrap_or_else(|e| {
+             tracing::warn!(
+                 "start_proxy: read bridge.md failed ({}), using embedded fallback",
+@@ -326,10 +331,20 @@ async fn start_proxy(
+             BRIDGE_MD_FALLBACK.to_string()
+         }
+     };
++    let profile = instruction::selected(manager.codex_home());
++    let instructions = instruction::render(&base_instructions, profile.id)?;
++    tracing::info!(
++        "start_proxy: instruction boundary = {} ({})",
++        profile.id,
++        profile.name
++    );
+
+     // 3. 部署 — bridge_active 不足以判断完整部署，需验证 bridge_exists 和 relay_url_valid
+     let status = manager.status();
+-    let needs_deploy = !status.bridge_active || !status.bridge_exists || !status.relay_url_valid;
++    let needs_deploy = !status.bridge_active
++        || !status.bridge_exists
++        || !status.relay_url_valid
++        || !manager.instruction_profile_matches(profile.id);
+
+     if needs_deploy {
+         tracing::info!(
+@@ -586,7 +601,7 @@ async fn deploy_bridge(app: tauri::AppHandle) -> Result<String, String> {
+     let manager = DeployManager::new().ok_or("Codex home not found")?;
+     let skills_sync_message = skills::sync_enabled_skills(&app)?;
+     // bridge.md: 文件查找优先，fallback 用编译期嵌入版本
+-    let bridge_md = match resolve_resource_file(&app, "bridge.md") {
++    let base_bridge_md = match resolve_resource_file(&app, "bridge.md") {
+         Ok(path) => std::fs::read_to_string(&path).unwrap_or_else(|e| {
+             tracing::warn!(
+                 "deploy_bridge: read bridge.md failed ({}), using embedded fallback",
+@@ -602,6 +617,13 @@ async fn deploy_bridge(app: tauri::AppHandle) -> Result<String, String> {
+             BRIDGE_MD_FALLBACK.to_string()
+         }
+     };
++    let profile = instruction::selected(manager.codex_home());
++    let bridge_md = instruction::render(&base_bridge_md, profile.id)?;
++    tracing::info!(
++        "deploy_bridge: instruction boundary = {} ({})",
++        profile.id,
++        profile.name
++    );
+     // Skills 由管理页独立同步，部署事务只处理 bridge/config。
+     let result = manager
+         .apply_with_optional_skills(&bridge_md, None)
+@@ -729,9 +751,42 @@ async fn get_codex_info() -> Result<serde_json::Value, String> {
+     let relay = home
+         .as_ref()
+         .and_then(|path| providers::configured_relay_url(path));
++    let instruction_profile = home
++        .as_ref()
++        .map(|path| instruction::selected_id(path))
++        .unwrap_or_else(|| instruction::DEFAULT_PROFILE.to_string());
+     Ok(serde_json::json!({
+         "codex_home": home.map(|p| p.display().to_string()),
+         "relay_url": relay,
++        "instruction_profile": instruction_profile,
++    }))
++}
++
++#[tauri::command]
++fn get_adapters() -> Vec<adapters::AdapterInfo> {
++    adapters::list()
++}
++
++#[tauri::command]
++fn get_instruction_profiles() -> Result<serde_json::Value, String> {
++    let selected = DeployManager::find_codex_home()
++        .map(|home| instruction::selected_id(&home))
++        .unwrap_or_else(|| instruction::DEFAULT_PROFILE.to_string());
++    Ok(serde_json::json!({
++        "selected": selected,
++        "profiles": instruction::list_profiles(),
++    }))
++}
++
++#[tauri::command]
++fn set_instruction_profile(profile: String) -> Result<serde_json::Value, String> {
++    let home = DeployManager::find_codex_home().ok_or("Codex home not found")?;
++    let selected = instruction::save(&home, profile.trim())?;
++    Ok(serde_json::json!({
++        "ok": true,
++        "selected": selected.id,
++        "name": selected.name,
++        "message": "指令边界已保存；重新部署或下次启动代理时生效",
+     }))
+ }
+
+@@ -916,6 +971,9 @@ async fn get_deploy_status() -> Result<serde_json::Value, String> {
+                 "transaction_pending": status.transaction_pending,
+                 "integrity_ok": status.integrity_ok,
+                 "deployment_id": status.deployment_id,
++                "instruction_profile": DeployManager::find_codex_home()
++                    .map(|home| instruction::selected_id(&home))
++                    .unwrap_or_else(|| instruction::DEFAULT_PROFILE.to_string()),
+             }))
+         }
+         None => Ok(serde_json::json!({
+diff --git a/src-tauri/tauri.conf.json b/src-tauri/tauri.conf.json
+index f9fe01a..f8d745b 100644
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -2,7 +2,7 @@
+   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-config-schema/schema.json",
+   "productName": "矩龙破甲",
+   "mainBinaryName": "julong-codex-keysmith",
+-  "version": "0.2.1",
++  "version": "0.2.2",
+   "identifier": "com.xujs.julong.codex.keysmith",
+   "build": {
+     "beforeBuildCommand": "npm run copy-resources",

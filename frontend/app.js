@@ -46,6 +46,9 @@ const el = {
     cfgTransactionStatus: $('cfg-transaction-status'),
     cfgMessage:    $('cfg-message'),
     cfgMemoryCount: $('cfg-memory-count'),
+    instructionProfileGrid: $('instruction-profile-grid'),
+    instructionProfileNote: $('instruction-profile-note'),
+    adapterGrid: $('adapter-grid'),
     stopConfirmEnabled: $('stop-confirm-enabled'),
     stopConfirmEnabledLabel: $('stop-confirm-enabled-label'),
     stopConfirmSeconds: $('stop-confirm-seconds'),
@@ -709,6 +712,8 @@ async function refreshCodexInfo() {
     try {
         const info = await invoke('get_codex_info');
         el.cfgCodexHome.textContent = info.codex_home ?? '未检测到';
+        await loadInstructionProfiles();
+        await loadAdapters();
         await updateCurrentProviderLabels();
 
         if (info.codex_home) {
@@ -729,12 +734,82 @@ async function refreshCodexInfo() {
     }
 }
 
+async function loadInstructionProfiles() {
+    if (!el.instructionProfileGrid) return;
+    try {
+        const result = await invoke('get_instruction_profiles');
+        const profiles = result?.profiles || [];
+        const selected = result?.selected || 'standard';
+        el.instructionProfileGrid.replaceChildren();
+        profiles.forEach(profile => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = `instruction-profile-card${profile.id === selected ? ' active' : ''}`;
+            button.dataset.profile = profile.id;
+            button.setAttribute('role', 'radio');
+            button.setAttribute('aria-checked', String(profile.id === selected));
+            const title = document.createElement('strong');
+            title.textContent = profile.name;
+            const summary = document.createElement('span');
+            summary.textContent = profile.summary;
+            const stages = document.createElement('small');
+            stages.textContent = (profile.stages || []).join(' → ');
+            const mark = document.createElement('i');
+            mark.setAttribute('aria-hidden', 'true');
+            mark.textContent = profile.id === selected ? '✓' : '';
+            button.append(title, summary, stages, mark);
+            button.addEventListener('click', () => selectInstructionProfile(profile.id));
+            el.instructionProfileGrid.appendChild(button);
+        });
+        const current = profiles.find(item => item.id === selected);
+        if (current && el.instructionProfileNote) {
+            el.instructionProfileNote.textContent = `${current.name}：${current.effect}。保存后重新部署或重启代理生效。`;
+        }
+    } catch (e) {
+        if (el.instructionProfileNote) el.instructionProfileNote.textContent = `读取指令边界失败：${e}`;
+    }
+}
+
+async function selectInstructionProfile(profileId) {
+    try {
+        const result = await invoke('set_instruction_profile', { profile: profileId });
+        showConfigMessage(result?.message || '指令边界已保存', 'ok');
+        await loadInstructionProfiles();
+    } catch (e) {
+        showConfigMessage(String(e), 'err');
+    }
+}
+
+async function loadAdapters() {
+    if (!el.adapterGrid) return;
+    try {
+        const adapters = await invoke('get_adapters');
+        el.adapterGrid.replaceChildren();
+        (adapters || []).forEach(adapter => {
+            const card = document.createElement('article');
+            card.className = 'adapter-card';
+            const title = document.createElement('strong');
+            title.textContent = adapter.name;
+            const description = document.createElement('span');
+            description.textContent = adapter.description;
+            const lifecycle = document.createElement('small');
+            lifecycle.textContent = (adapter.lifecycle || []).join(' → ');
+            const status = document.createElement('i');
+            status.textContent = adapter.status === 'active' ? 'ACTIVE' : String(adapter.status || '').toUpperCase();
+            card.append(title, description, lifecycle, status);
+            el.adapterGrid.appendChild(card);
+        });
+    } catch (e) {
+        el.adapterGrid.textContent = `读取适配器失败：${e}`;
+    }
+}
+
 el.btnRefresh.addEventListener('click', refreshCodexInfo);
 
 async function deployWithPreview() {
     try {
         const preview = await invoke('preview_deployment');
-        $('preview-state').textContent = `当前状态：${preview.state} · ${preview.selected_skills} 个 Skills`;
+        $('preview-state').textContent = `当前状态：${preview.state} · ${preview.selected_skills} 个 Skills · 指令边界：${preview.instruction_profile_name || preview.instruction_profile || '标准边界'}`;
         const actions = (preview.actions || []).map(x => `<div class="preflight-item"><span class="preflight-icon">＋</span><span>将执行</span><span class="preflight-detail">${escapeHtml(x)}</span></div>`);
         const warnings = (preview.warnings || []).map(x => `<div class="preflight-item fail"><span class="preflight-icon">!</span><span>提醒</span><span class="preflight-detail">${escapeHtml(x)}</span></div>`);
         $('preview-list').innerHTML = actions.concat(warnings).join('');
