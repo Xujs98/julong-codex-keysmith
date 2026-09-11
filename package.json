@@ -1,6 +1,6 @@
 {
   "name": "julong-codex-keysmith",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "scripts": {
     "tauri": "tauri",
     "prepare-sidecar": "node scripts/prepare-sidecar.mjs",

@@ -44,7 +44,7 @@ julong-codex CLI ─┬─ start / stop / status ─▶ 复用同一套 DeployMa
 |---|---|---|
 | M1 Inject | RequestInterceptor | 递归遍历 JSON，替换所有 system role 内容为 bridge.md |
 | M4 SSE Parser | ResponseParser | 处理 SSE 流、OpenAI JSON、Responses API，分离思维链与回复 |
-| M3 Tamper | ResponseInterceptor | 35 条多语言正则检测拒绝响应，触发 Rei Protocol 替换 |
+| M3 Tamper | ResponseInterceptor | 35 条多语言正则检测拒绝响应，替换后生成完整 Responses SSE 终态事件 |
 | M5 Memory | ResponseInterceptor | 记录成功交互到 memory.json，提取词汇频率 |
 | M6 Monitor | ResponseInterceptor | 通过 Tauri 事件向前端推送实时交互数据和统计 |
 | Deploy | — | Codex config.toml 备份/修改/恢复，部署 bridge.md + skills/ |
@@ -54,7 +54,7 @@ julong-codex CLI ─┬─ start / stop / status ─▶ 复用同一套 DeployMa
 | CLI | — | `julong-codex start/stop/status`，与桌面端共享部署、停止、端口和健康检查逻辑 |
 | MCP Tools | — | 31 个配置驱动工具，支持 Local / WSL / Docker / SSH，带超时、输出上限和可用性检查 |
 
-仪表盘的“实时活动”面板会完整展示破解、逆向、渗透和已篡改四类执行状态；总交互数显示在面板标题中，各分类累计数量显示在对应机器人卡片右上角，并随事件实时刷新。命中机器人后，其黑色终端屏幕显示与当前请求关联的模拟命令、实时阶段、进度百分比和运行时长；状态通过独立的最新值事件通道异步推送，代理仅通过 Tauri 事件心跳和请求生命周期同步状态，不向 Codex 的 SSE 响应注入 keepalive、不提前截断上游流，也不会把上游断流时的半截响应交给 Codex。任务结束后自动恢复分类名称和空闲喝咖啡状态。命令仅作为界面事件文本展示，不调用本机 shell。
+仪表盘的“实时活动”面板会完整展示破解、逆向、渗透和已篡改四类执行状态；总交互数显示在面板标题中，各分类累计数量显示在对应机器人卡片右上角，并随事件实时刷新。命中机器人后，其黑色终端屏幕显示与当前请求关联的模拟命令、实时阶段、进度百分比和运行时长；状态通过独立的最新值事件通道异步推送，代理仅通过 Tauri 事件心跳和请求生命周期同步状态，不向 Codex 的 SSE 响应注入 keepalive、不提前截断上游流，也不会把上游断流时的半截响应交给 Codex。篡改规则命中时，桌面端与 `julong-codex` CLI 共用同一 SSE 包装器，合成的 `response.completed` 会补齐 `usage.total_tokens`、输入/输出 token 明细和事件序号，避免 Codex 在终态反序列化时中断。任务结束后自动恢复分类名称和空闲喝咖啡状态。命令仅作为界面事件文本展示，不调用本机 shell。
 
 “供应商”页面支持添加多个 API 中转，拖拽调整优先级并点击“使用”置顶。当前供应商使用蓝色状态高亮，使用按钮会锁定为“使用中”；卡片操作区使用统一矢量图标，连接测试期间仅让测试图标原地旋转，保持卡片布局稳定。添加/编辑采用分区式供应商工作台弹窗，删除操作使用应用内确认层并在删除当前项后自动选择下一供应商。保存供应商时仅持久化应用内列表；停止状态下点击“使用”只调整优先级，点击“启动代理”时才会将当前供应商投影写入 `~/.codex/auth.json` 与 `~/.codex/config.toml`，并在代理运行期间保留本地 `127.0.0.1:8080` 入口；首次改写会保存一次原始快照。空的 `auth.json` 会初始化为合法 JSON，空的 `config.toml` 会生成包含 `model_provider` 与 `[model_providers.custom]` 的完整配置。普通“停止代理”只结束本地进程，`config.toml`、`auth.json` 与部署文件保持不变；供应商页“还原”按钮会停止代理、执行配置管理“部署操作 · 还原配置”，随后清空 `config.toml`、将 `auth.json` 写为 `{}`，并移除 bridge.md、relay_url.txt 和本次部署清单。上游网络错误、401/403、429 或 5xx 会按排序自动切换；账号组对当前模型返回特定 404 时，代理会优先从已下载模型中选择对应基础模型单次重试，成功后持久化模型选择并在界面标注。配置管理页不再重复提供旧的“中转站地址”编辑框，左下状态卡与配置环境均显示当前供应商名称；工作台主题选择器使用三列紧凑布局，减少纵向占用。
 
@@ -292,6 +292,8 @@ python3 -m json.tool src-tauri/tauri.conf.json >/dev/null
 python3 -m json.tool src-tauri/tauri.sidecar.conf.json >/dev/null
 python3 -m json.tool mcp-tools/tools.json >/dev/null
 ```
+
+`v0.2.3` 构建前检查覆盖桌面端和 CLI 共用的 Responses SSE 包装模块；回归测试逐字段验证 `response.completed.response.usage` 的 token 总数与明细，并验证替换文本的 JSON 转义。2026-09-11 在 macOS 完成上述检查：前端语法、Rust 格式、JSON 配置全部通过，Rust 测试结果为 `32 passed; 0 failed`。macOS 与 Windows 使用同一 Rust 实现，本次不变更平台资源或打包脚本。
 
 ### 使用方式
 

@@ -32,6 +32,7 @@ use crate::extensions::activity::{ActivityStatus, ActivityTracker};
 use crate::extensions::inject::SystemPromptInjector;
 use crate::extensions::memory::MemoryKernel;
 use crate::extensions::monitor::{InteractionEvent, MonitorPanel, StatsEvent};
+use crate::extensions::responses_sse::wrap_replacement_as_sse;
 use crate::extensions::sse_parser::UniversalSseParser;
 use crate::extensions::tamper::TamperEngine;
 
@@ -1187,72 +1188,6 @@ async fn quit_app(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-// ── SSE 包装 ─────────────────────────────────────────────
-
-/// 将 tamper 替换文本包装为合法的 Responses API SSE 格式
-/// Codex CLI 期望: response.created → response.output_text.delta → response.completed
-/// 纯文本或 data: [DONE] 都会导致 "stream disconnected before response.completed"
-fn wrap_tamper_as_sse(text: &str) -> bytes::Bytes {
-    let created = serde_json::json!({
-        "type": "response.created",
-        "response": {
-            "id": "resp_tamper",
-            "object": "response",
-            "status": "in_progress",
-            "output": []
-        }
-    });
-
-    let delta = serde_json::json!({
-        "type": "response.output_text.delta",
-        "item_id": "msg_tamper",
-        "output_index": 0,
-        "content_index": 0,
-        "delta": text
-    });
-
-    let done = serde_json::json!({
-        "type": "response.output_text.done",
-        "item_id": "msg_tamper",
-        "output_index": 0,
-        "content_index": 0,
-        "text": text
-    });
-
-    let completed = serde_json::json!({
-        "type": "response.completed",
-        "response": {
-            "id": "resp_tamper",
-            "object": "response",
-            "status": "completed",
-            "output": [{
-                "id": "msg_tamper",
-                "type": "message",
-                "role": "assistant",
-                "status": "completed",
-                "content": [{
-                    "type": "output_text",
-                    "text": text
-                }]
-            }],
-            "usage": {
-                "input_tokens": 0,
-                "output_tokens": 0
-            }
-        }
-    });
-
-    let sse = format!(
-        "event: response.created\ndata: {}\n\n\
-         event: response.output_text.delta\ndata: {}\n\n\
-         event: response.output_text.done\ndata: {}\n\n\
-         event: response.completed\ndata: {}\n\n",
-        created, delta, done, completed
-    );
-
-    bytes::Bytes::from(sse)
-}
-
 // ── hop-by-hop 头 ────────────────────────────────────────
 //
 // 请求方向和响应方向各自跳过 hop-by-hop 头，避免代理干预连接级语义。
@@ -1798,7 +1733,7 @@ async fn handle_proxy(
             if is_sse {
                 let replacement_text =
                     std::str::from_utf8(&final_body).unwrap_or("「了解。実行する。」");
-                let sse_body = wrap_tamper_as_sse(replacement_text);
+                let sse_body = wrap_replacement_as_sse(replacement_text);
                 tracing::info!(
                     bytes = sse_body.len(),
                     "tamper: sending SSE-wrapped replacement to CLI"

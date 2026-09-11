@@ -8,6 +8,7 @@ use crate::core::MitmCore;
 use crate::deploy::DeployManager;
 use crate::extensions::inject::SystemPromptInjector;
 use crate::extensions::memory::MemoryKernel;
+use crate::extensions::responses_sse::wrap_replacement_as_sse;
 use crate::extensions::sse_parser::UniversalSseParser;
 use crate::extensions::tamper::TamperEngine;
 use crate::instruction;
@@ -665,9 +666,8 @@ async fn headless_handler(
         0,
     );
     let response_type = if tampered && is_sse {
-        final_body = bytes::Bytes::from(wrap_tamper_as_sse(
-            std::str::from_utf8(&final_body).unwrap_or("响应已替换"),
-        ));
+        final_body =
+            wrap_replacement_as_sse(std::str::from_utf8(&final_body).unwrap_or("响应已替换"));
         "text/event-stream"
     } else {
         content_type.as_deref().unwrap_or("application/json")
@@ -714,14 +714,6 @@ fn response(
         .header("content-type", content_type)
         .body(axum::body::Body::from(body))
         .unwrap()
-}
-
-fn wrap_tamper_as_sse(text: &str) -> String {
-    let created = json!({"type":"response.created","response":{"id":"resp_tamper","object":"response","status":"in_progress","output":[]}});
-    let delta = json!({"type":"response.output_text.delta","item_id":"msg_tamper","output_index":0,"content_index":0,"delta":text});
-    let done = json!({"type":"response.output_text.done","item_id":"msg_tamper","output_index":0,"content_index":0,"text":text});
-    let completed = json!({"type":"response.completed","response":{"id":"resp_tamper","object":"response","status":"completed","output":[{"id":"msg_tamper","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":text}]}]}});
-    format!("event: response.created\ndata: {created}\n\nevent: response.output_text.delta\ndata: {delta}\n\nevent: response.output_text.done\ndata: {done}\n\nevent: response.completed\ndata: {completed}\n\n")
 }
 
 fn resource_file(name: &str) -> Option<PathBuf> {
