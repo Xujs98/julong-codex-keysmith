@@ -8,5 +8,9 @@ if not exist "%~dp0instruction-packs\gpt-6-astra-v1.md" (
   echo Missing instruction pack resource: gpt-6-astra-v1.md
   exit /b 1
 )
+if not exist "%~dp0instruction-lab\release-catalog.json" (
+  echo Missing instruction lab resource: release-catalog.json
+  exit /b 1
+)
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0build-windows.ps1" %*
 exit /b %ERRORLEVEL%

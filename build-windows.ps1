@@ -13,7 +13,12 @@ Set-Location $ProjectRoot
 $RequiredInstructionPacks = @(
     "instruction-packs\gpt-5.6-sol-v45.md",
     "instruction-packs\gpt-6-astra-v1.md",
-    "instruction-packs\LICENSE.gpt-instruct"
+    "instruction-packs\LICENSE.gpt-instruct",
+    "instruction-lab\release-catalog.json",
+    "instruction-lab\evidence-template.json",
+    "instruction-lab\LICENSE.gpt-instruct",
+    "instruction-lab\banks\issue-regression.jsonl",
+    "instruction-lab\banks\prompt-medium.jsonl"
 )
 foreach ($RelativePath in $RequiredInstructionPacks) {
     if (-not (Test-Path (Join-Path $ProjectRoot $RelativePath))) {
@@ -56,6 +61,7 @@ Write-Host "=== Windows Release Build ===" -ForegroundColor Cyan
 Write-Host "Target : $Target"
 Write-Host "Bundles: $Bundles"
 Write-Host "Instruction packs: gpt-5.6-sol-v45, gpt-6-astra-v1"
+Write-Host "Instruction lab: A/B/C gates + 66-case issue bank + 120-case medium bank"
 
 Write-Host "[1/5] Installing JavaScript dependencies..." -ForegroundColor Yellow
 if (Test-Path "package-lock.json") {

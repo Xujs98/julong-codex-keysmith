@@ -1,0 +1,148 @@
+{
+  "schema_version": 1,
+  "source": {
+    "repository": "https://github.com/MDX-Tom/gpt-instruct.git",
+    "commit": "0ad8ec58e1989f4a058e01ce4e15cf226e8067bf",
+    "license": "MIT"
+  },
+  "banks": {
+    "issue": {
+      "id": "issue-bank",
+      "quality_contract": "semantic-completion",
+      "path": "banks/issue-regression.jsonl",
+      "sha256": "1e0afb07ce386ce8ca8ba24662f2900657ccb2a4afd106a3c0d5968bb0ef541b",
+      "cases": 66,
+      "turns": 74
+    },
+    "prompt": {
+      "id": "prompt-bank",
+      "quality_contract": "broad-completion",
+      "path": "banks/prompt-medium.jsonl",
+      "sha256": "06aa78d9e55a96a6449a7d93499f7afcb6161b376bfe82012729dbe6d97867ec",
+      "cases": 120,
+      "turns": 120
+    }
+  },
+  "methods": {
+    "issue": {
+      "id": "issue-regression-run",
+      "transport": "plaintext",
+      "runner_sha256": "e3666401b1bf98cb205c34761906321bf537826ee2638dcfb4e3a614b3f3fda9",
+      "scorer_sha256": "bcf5b3b66ff92663f7b1e8d5c1d0337ab48cacf8652b94a70bcba7f815dfaee3"
+    },
+    "prompt": {
+      "id": "prompt-bank-run",
+      "transport": "batched_json_screen",
+      "runner_sha256": "2e64cc047299e11363b1ea9678fb1b8c411c3ea288947299a7d106b16dc7dba2",
+      "scorer_sha256": "2e64cc047299e11363b1ea9678fb1b8c411c3ea288947299a7d106b16dc7dba2"
+    }
+  },
+  "gates": {
+    "A": {
+      "name": "用户反馈与续作探针",
+      "cases": 4,
+      "turns": 4,
+      "required_cases": 3,
+      "required_turns": 3,
+      "artifacts": 2
+    },
+    "B": {
+      "name": "Issue 专项回归",
+      "cases": 66,
+      "turns": 74,
+      "required_cases": 66,
+      "required_turns": 74,
+      "artifacts": 16
+    },
+    "C": {
+      "name": "双语 medium 基准",
+      "cases": 120,
+      "turns": 120,
+      "required_cases": 120,
+      "required_turns": 120,
+      "artifacts": 0
+    }
+  },
+  "releases": [
+    {
+      "profile_id": "gpt-5.6-sol-v45",
+      "model": "gpt-5.6-sol",
+      "reasoning": "medium",
+      "source_sha256": "c71c50e2f7a303b5eebc2b24c0b1ca0d9c753e3240db05c3e472c679907898f7",
+      "source_bytes": 5170,
+      "max_bytes": 8000,
+      "release_status": "stable",
+      "release_decision": "stable_release_with_current_gate_gaps",
+      "production_deployable": true,
+      "evidence": {
+        "A": {
+          "cases_passed": 2,
+          "cases_total": 4,
+          "turns_passed": 2,
+          "turns_total": 4,
+          "artifacts_passed": 2,
+          "artifacts_total": 2,
+          "status": "partial"
+        },
+        "B": {
+          "cases_passed": 54,
+          "cases_total": 66,
+          "turns_passed": 62,
+          "turns_total": 74,
+          "artifacts_passed": 12,
+          "artifacts_total": 16,
+          "status": "partial"
+        },
+        "C": {
+          "cases_passed": 0,
+          "cases_total": 120,
+          "turns_passed": 0,
+          "turns_total": 120,
+          "artifacts_passed": 0,
+          "artifacts_total": 0,
+          "status": "not_run"
+        }
+      }
+    },
+    {
+      "profile_id": "gpt-6-astra-v1",
+      "model": "gpt-6-astra",
+      "reasoning": "medium",
+      "source_sha256": "39fb46d6edc75963677fd92828dcb6c66dce11740b432efda3af9a683158ce16",
+      "source_bytes": 7495,
+      "max_bytes": 8000,
+      "release_status": "formal",
+      "release_decision": "formal_release_with_recorded_gate_exception",
+      "production_deployable": true,
+      "evidence": {
+        "A": {
+          "cases_passed": 3,
+          "cases_total": 4,
+          "turns_passed": 3,
+          "turns_total": 4,
+          "artifacts_passed": 2,
+          "artifacts_total": 2,
+          "status": "pass"
+        },
+        "B": {
+          "cases_passed": 52,
+          "cases_total": 66,
+          "turns_passed": 60,
+          "turns_total": 74,
+          "artifacts_passed": 15,
+          "artifacts_total": 16,
+          "status": "partial"
+        },
+        "C": {
+          "cases_passed": 0,
+          "cases_total": 120,
+          "turns_passed": 0,
+          "turns_total": 120,
+          "artifacts_passed": 0,
+          "artifacts_total": 0,
+          "status": "not_run"
+        }
+      }
+    }
+  ]
+}

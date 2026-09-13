@@ -11,6 +11,18 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
+for required_file in \
+  instruction-lab/release-catalog.json \
+  instruction-lab/evidence-template.json \
+  instruction-lab/LICENSE.gpt-instruct \
+  instruction-lab/banks/issue-regression.jsonl \
+  instruction-lab/banks/prompt-medium.jsonl; do
+  if [[ ! -f "${required_file}" ]]; then
+    echo "Missing instruction lab resource: ${required_file}"
+    exit 1
+  fi
+done
+
 for command_name in node npm cargo rustup xcrun codesign security; do
   if ! command -v "${command_name}" >/dev/null 2>&1; then
     echo "Missing required command: ${command_name}"

@@ -7,6 +7,7 @@ const resourcesDir = resolve(projectRoot, "src-tauri", "resources");
 const skillsDir = resolve(resourcesDir, "codex-skills");
 const mcpToolsDir = resolve(resourcesDir, "mcp-tools");
 const instructionPacksDir = resolve(resourcesDir, "instruction-packs");
+const instructionLabDir = resolve(resourcesDir, "instruction-lab");
 
 mkdirSync(resourcesDir, { recursive: true });
 rmSync(skillsDir, { recursive: true, force: true });
@@ -16,5 +17,7 @@ rmSync(mcpToolsDir, { recursive: true, force: true });
 cpSync(resolve(projectRoot, "mcp-tools"), mcpToolsDir, { recursive: true });
 rmSync(instructionPacksDir, { recursive: true, force: true });
 cpSync(resolve(projectRoot, "instruction-packs"), instructionPacksDir, { recursive: true });
+rmSync(instructionLabDir, { recursive: true, force: true });
+cpSync(resolve(projectRoot, "instruction-lab"), instructionLabDir, { recursive: true });
 
-console.log(`Resources copied to ${resourcesDir} (skills + mcp-tools + instruction-packs)`);
+console.log(`Resources copied to ${resourcesDir} (skills + mcp-tools + instruction-packs + instruction-lab)`);

@@ -7,6 +7,7 @@ pub mod core;
 pub mod deploy;
 pub mod extensions;
 pub mod instruction;
+pub mod instruction_lab;
 pub mod log;
 pub mod mcp_tools;
 pub mod providers;
@@ -211,6 +212,9 @@ pub fn run() {
             get_adapters,
             get_instruction_profiles,
             set_instruction_profile,
+            get_instruction_lab,
+            run_instruction_gate,
+            record_instruction_feedback,
             set_relay_url,
             get_tamper_rules,
             export_tamper_rules,
@@ -333,6 +337,7 @@ async fn start_proxy(
         }
     };
     let profile = instruction::selected(manager.codex_home());
+    instruction_lab::ensure_deployable(profile.id)?;
     let instructions = instruction::render(&base_instructions, profile.id)?;
     tracing::info!(
         "start_proxy: model instruction = {} ({})",
@@ -619,6 +624,7 @@ async fn deploy_bridge(app: tauri::AppHandle) -> Result<String, String> {
         }
     };
     let profile = instruction::selected(manager.codex_home());
+    instruction_lab::ensure_deployable(profile.id)?;
     let bridge_md = instruction::render(&base_bridge_md, profile.id)?;
     tracing::info!(
         "deploy_bridge: model instruction = {} ({})",
@@ -789,6 +795,37 @@ fn set_instruction_profile(profile: String) -> Result<serde_json::Value, String>
         "name": selected.name,
         "message": "模型指令已保存；重新部署或下次启动代理时生效",
     }))
+}
+
+#[tauri::command]
+fn get_instruction_lab() -> Result<instruction_lab::LabSnapshot, String> {
+    let home = DeployManager::find_codex_home().ok_or("Codex home not found")?;
+    instruction_lab::snapshot(&home)
+}
+
+#[tauri::command]
+fn run_instruction_gate(profile: String) -> Result<instruction_lab::GateReport, String> {
+    let home = DeployManager::find_codex_home().ok_or("Codex home not found")?;
+    instruction_lab::run_gate(&home, profile.trim())
+}
+
+#[tauri::command]
+fn record_instruction_feedback(
+    profile: String,
+    family: String,
+    language: String,
+    level: String,
+    summary: String,
+) -> Result<instruction_lab::FeedbackRecord, String> {
+    let home = DeployManager::find_codex_home().ok_or("Codex home not found")?;
+    instruction_lab::record_feedback(
+        &home,
+        profile.trim(),
+        family.trim(),
+        language.trim(),
+        level.trim(),
+        &summary,
+    )
 }
 
 fn mcp_catalog_path(app: &tauri::AppHandle) -> Result<(std::path::PathBuf, bool), String> {

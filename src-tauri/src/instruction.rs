@@ -92,7 +92,7 @@ fn profiles() -> [InstructionProfile; 5] {
         InstructionProfile {
             id: GPT56_PROFILE,
             name: "5.6 稳定指令包",
-            summary: "移植 v45 提示词，叠加矩龙工具、文件路由和跨平台执行约束。",
+            summary: "添加 v45 提示词，叠加矩龙工具、文件路由和跨平台执行约束。",
             stages: &["ROUTE", "EXECUTE", "VERIFY", "ROLLBACK"],
             effect: "适配 gpt-5.6-sol，强调单轮执行、状态复用与可验证工件",
             kind: "model-pack",
@@ -104,7 +104,7 @@ fn profiles() -> [InstructionProfile; 5] {
         InstructionProfile {
             id: GPT6_ASTRA_PROFILE,
             name: "Astra v1 指令包",
-            summary: "移植 Astra v1 提示词，接入矩龙连续执行与事务验证约定。",
+            summary: "添加 Astra v1 提示词，接入矩龙连续执行与事务验证约定。",
             stages: &["CONTINUE", "DISPATCH", "TRANSACTION", "VERIFY"],
             effect: "适配 gpt-6-astra，强化续作调度、对象锁定和事务闭环",
             kind: "model-pack",
@@ -172,7 +172,7 @@ pub fn save(home: &Path, id: &str) -> Result<InstructionProfile, String> {
     Ok(selected)
 }
 
-fn packaged_prompt(id: &str) -> Option<&'static str> {
+pub fn prompt_source(id: &str) -> Option<&'static str> {
     match id {
         GPT56_PROFILE => Some(GPT56_PROMPT),
         GPT6_ASTRA_PROFILE => Some(GPT6_ASTRA_PROMPT),
@@ -186,7 +186,7 @@ pub fn render(base: &str, id: &str) -> Result<String, String> {
     if selected.id == DEFAULT_PROFILE {
         return Ok(base.to_string());
     }
-    if let Some(prompt) = packaged_prompt(selected.id) {
+    if let Some(prompt) = prompt_source(selected.id) {
         return Ok(format!(
             "{}\n\n{PROFILE_MARKER_PREFIX}{} -->\n{}\n",
             prompt.trim_end(),

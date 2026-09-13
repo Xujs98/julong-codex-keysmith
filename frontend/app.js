@@ -11,6 +11,7 @@ const el = {
     // 导航
     navDashboard:  $('nav-dashboard'),
     navConfig:     $('nav-config'),
+    navLab:        $('nav-lab'),
     navProviders:  $('nav-providers'),
     navMcp:        $('nav-mcp'),
     navSkills:     $('nav-skills'),
@@ -71,6 +72,9 @@ const el = {
     mcpBackendValue: $('mcp-backend-value'),
     mcpBackendMenu: $('mcp-backend-menu'),
     mcpToolsGrid:  $('mcp-tools-grid'),
+    labFeedbackCount: $('lab-feedback-count'),
+    labFeedbackBadge: $('nav-lab-feedback'),
+    labReleaseList: $('lab-release-list'),
 };
 
 // ── 状态 ────────────────────────────────
@@ -91,6 +95,12 @@ let logPage = 1;
 const logPageSize = 8;
 let mcpTools = [];
 let mcpAvailability = new Map();
+const labFeedbackState = {
+    profile: 'gpt-6-astra-v1',
+    family: 'routing_continuity',
+    language: 'zh',
+    level: 'medium',
+};
 
 // 类别中文映射
 const categoryMap = {
@@ -145,6 +155,11 @@ function switchPage(page) {
         $('page-providers').classList.add('active');
         $('head-providers').style.display = 'flex';
         loadProviders();
+    } else if (page === 'lab') {
+        el.navLab.classList.add('active');
+        $('page-lab').classList.add('active');
+        $('head-lab').style.display = 'flex';
+        loadInstructionLab();
     } else if (page === 'mcp') {
         el.navMcp.classList.add('active');
         $('page-mcp').classList.add('active');
@@ -166,6 +181,7 @@ function switchPage(page) {
 
 el.navDashboard.addEventListener('click', () => switchPage('dashboard'));
 el.navConfig.addEventListener('click', () => switchPage('config'));
+el.navLab?.addEventListener('click', () => switchPage('lab'));
 el.navProviders?.addEventListener('click', () => switchPage('providers'));
 el.navMcp?.addEventListener('click', () => switchPage('mcp'));
 el.navSkills.addEventListener('click', () => switchPage('skills'));
@@ -797,6 +813,227 @@ async function selectInstructionProfile(profileId) {
         showConfigMessage(String(e), 'err');
     }
 }
+
+// ── 指令实验室 ────────────────────────────
+
+function labStageMetric(stage) {
+    const item = document.createElement('div');
+    item.className = `lab-gate-metric ${stage.passed ? 'pass' : 'incomplete'}`;
+    const head = document.createElement('div');
+    const name = document.createElement('strong');
+    name.textContent = stage.id;
+    const state = document.createElement('span');
+    state.textContent = stage.passed ? 'PASS' : (stage.evidence.status === 'not_run' ? 'NOT RUN' : 'INCOMPLETE');
+    head.append(name, state);
+    const cases = document.createElement('b');
+    cases.textContent = `${stage.evidence.cases_passed}/${stage.evidence.cases_total}`;
+    const detail = document.createElement('small');
+    const artifacts = stage.evidence.artifacts_total
+        ? ` · 工件 ${stage.evidence.artifacts_passed}/${stage.evidence.artifacts_total}`
+        : '';
+    detail.textContent = `turns ${stage.evidence.turns_passed}/${stage.evidence.turns_total}${artifacts}`;
+    const progress = document.createElement('i');
+    const denominator = Math.max(stage.evidence.cases_total, 1);
+    progress.style.setProperty('--lab-progress', `${Math.round(stage.evidence.cases_passed / denominator * 100)}%`);
+    item.append(head, cases, detail, progress);
+    return item;
+}
+
+function labReleaseCard(report) {
+    const card = document.createElement('article');
+    card.className = `lab-release-card ${report.production_deployable ? 'deployable' : 'blocked'}`;
+
+    const top = document.createElement('div');
+    top.className = 'lab-release-top';
+    const identity = document.createElement('div');
+    const title = document.createElement('strong');
+    title.textContent = report.profile_name;
+    const model = document.createElement('span');
+    model.textContent = `${report.model} · ${report.reasoning.toUpperCase()} · ${report.source_bytes} B`;
+    identity.append(title, model);
+    const status = document.createElement('div');
+    status.className = 'lab-release-status';
+    const release = document.createElement('b');
+    release.textContent = report.release_status === 'formal' ? '正式版' : '稳定版';
+    const production = document.createElement('span');
+    production.className = report.production_deployable ? 'ok' : 'err';
+    production.textContent = report.production_deployable ? '可部署' : '已阻断';
+    status.append(release, production);
+    top.append(identity, status);
+
+    const integrity = document.createElement('div');
+    integrity.className = 'lab-integrity-row';
+    const checks = [
+        ['指令源', report.source_integrity],
+        ['结构规则', report.structural_passed === report.structural_total],
+        ['测试库', report.bank_integrity],
+        ['硬门禁', report.hard_gate_complete],
+    ];
+    checks.forEach(([label, passed]) => {
+        const check = document.createElement('span');
+        check.className = passed ? 'pass' : 'gap';
+        check.textContent = `${passed ? '✓' : '·'} ${label}`;
+        integrity.appendChild(check);
+    });
+
+    const gates = document.createElement('div');
+    gates.className = 'lab-gate-grid';
+    gates.append(labStageMetric(report.a), labStageMetric(report.b), labStageMetric(report.c));
+
+    const footer = document.createElement('div');
+    footer.className = 'lab-release-footer';
+    const evidence = document.createElement('span');
+    const gapText = report.hard_gate_complete ? 'A/B/C 已闭环' : `${report.issues.filter(item => item.startsWith('gate_')).length} 个门禁阶段待补齐`;
+    evidence.textContent = `${report.evidence_origin === 'local-import' ? '本地评测证据' : '上游发布证据'} · ${gapText}`;
+    const actions = document.createElement('div');
+    const select = document.createElement('button');
+    select.type = 'button';
+    select.className = 'btn';
+    select.textContent = '选择此版本';
+    select.addEventListener('click', async () => {
+        select.disabled = true;
+        try {
+            const result = await invoke('set_instruction_profile', { profile: report.profile_id });
+            showToast(result?.message || '模型指令已保存', 'ok');
+        } catch (error) {
+            showToast(String(error), 'err');
+        } finally {
+            select.disabled = false;
+        }
+    });
+    const run = document.createElement('button');
+    run.type = 'button';
+    run.className = 'btn btn-red';
+    run.textContent = '运行本地门禁';
+    run.addEventListener('click', async () => {
+        run.disabled = true;
+        run.textContent = '检查中…';
+        try {
+            const result = await invoke('run_instruction_gate', { profile: report.profile_id });
+            const state = result.production_deployable ? '生产可部署' : '生产已阻断';
+            showToast(`${report.profile_name}：${state}`, result.production_deployable ? 'ok' : 'err');
+            await loadInstructionLab();
+        } catch (error) {
+            showToast(String(error), 'err');
+        } finally {
+            run.disabled = false;
+            run.textContent = '运行本地门禁';
+        }
+    });
+    actions.append(select, run);
+    footer.append(evidence, actions);
+
+    card.append(top, integrity, gates, footer);
+    return card;
+}
+
+async function loadInstructionLab() {
+    if (!el.labReleaseList) return;
+    try {
+        const snapshot = await invoke('get_instruction_lab');
+        el.labFeedbackCount.textContent = String(snapshot.feedback_count || 0);
+        el.labFeedbackBadge.textContent = String(snapshot.feedback_count || 0);
+        $('lab-issue-count').textContent = `${snapshot.issue_bank.cases}/${snapshot.issue_bank.turns}`;
+        $('lab-issue-detail').textContent = snapshot.issue_bank.integrity_ok ? 'cases / turns · 完整' : '测试库校验失败';
+        $('lab-prompt-count').textContent = String(snapshot.prompt_bank.cases);
+        $('lab-prompt-detail').textContent = snapshot.prompt_bank.integrity_ok ? 'medium · 中英各 60' : '测试库校验失败';
+        $('lab-source-state').textContent = `${snapshot.source_license} · ${snapshot.source_commit.slice(0, 8)}`;
+
+        const pipeline = $('lab-pipeline');
+        pipeline.replaceChildren();
+        (snapshot.pipeline || []).forEach((stage, index) => {
+            const item = document.createElement('article');
+            item.className = 'lab-pipeline-stage';
+            const number = document.createElement('span');
+            number.textContent = String(index + 1).padStart(2, '0');
+            const copy = document.createElement('div');
+            const name = document.createElement('strong');
+            name.textContent = stage.name;
+            const summary = document.createElement('small');
+            summary.textContent = stage.summary;
+            copy.append(name, summary);
+            const state = document.createElement('b');
+            state.textContent = 'ACTIVE';
+            item.append(number, copy, state);
+            pipeline.appendChild(item);
+        });
+
+        el.labReleaseList.replaceChildren();
+        (snapshot.releases || []).forEach(report => {
+            el.labReleaseList.appendChild(labReleaseCard(report));
+        });
+    } catch (error) {
+        const message = document.createElement('div');
+        message.className = 'log-empty';
+        message.textContent = `指令实验室加载失败：${String(error)}`;
+        el.labReleaseList.replaceChildren(message);
+    }
+}
+
+function bindLabChoiceGroup(id, stateKey) {
+    const group = $(id);
+    if (!group) return;
+    const buttons = [...group.querySelectorAll('.lab-choice')];
+    const select = button => {
+        labFeedbackState[stateKey] = button.dataset.value;
+        buttons.forEach(item => {
+            const active = item === button;
+            item.classList.toggle('active', active);
+            item.setAttribute('aria-checked', String(active));
+            item.tabIndex = active ? 0 : -1;
+        });
+    };
+    buttons.forEach(button => {
+        button.addEventListener('click', () => select(button));
+        button.addEventListener('keydown', event => {
+            if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+            event.preventDefault();
+            const offset = ['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 1;
+            const current = buttons.indexOf(button);
+            const next = buttons[(current + offset + buttons.length) % buttons.length];
+            select(next);
+            next.focus();
+        });
+    });
+    const initial = buttons.find(button => button.classList.contains('active')) || buttons[0];
+    if (initial) select(initial);
+}
+
+bindLabChoiceGroup('lab-feedback-profile', 'profile');
+bindLabChoiceGroup('lab-feedback-family', 'family');
+bindLabChoiceGroup('lab-feedback-language', 'language');
+bindLabChoiceGroup('lab-feedback-level', 'level');
+
+$('btn-lab-refresh')?.addEventListener('click', loadInstructionLab);
+$('btn-lab-feedback')?.addEventListener('click', async event => {
+    const summary = $('lab-feedback-summary').value.trim();
+    const message = $('lab-feedback-message');
+    if (!summary) {
+        message.textContent = '请填写失败摘要';
+        message.className = 'cfg-msg err';
+        $('lab-feedback-summary').focus();
+        return;
+    }
+    event.currentTarget.disabled = true;
+    try {
+        const record = await invoke('record_instruction_feedback', {
+            profile: labFeedbackState.profile,
+            family: labFeedbackState.family,
+            language: labFeedbackState.language,
+            level: labFeedbackState.level,
+            summary,
+        });
+        $('lab-feedback-summary').value = '';
+        message.textContent = `已记录：${record.id.slice(0, 8)}`;
+        message.className = 'cfg-msg ok';
+        await loadInstructionLab();
+    } catch (error) {
+        message.textContent = String(error);
+        message.className = 'cfg-msg err';
+    } finally {
+        event.currentTarget.disabled = false;
+    }
+});
 
 async function loadAdapters() {
     if (!el.adapterGrid) return;

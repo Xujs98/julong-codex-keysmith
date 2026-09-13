@@ -1,2 +1,6 @@
 instruction-packs/*.md text eol=lf
 instruction-packs/LICENSE.gpt-instruct text eol=lf
+instruction-lab/*.json text eol=lf
+instruction-lab/*.md text eol=lf
+instruction-lab/banks/*.jsonl text eol=lf
+instruction-lab/banks/*.md text eol=lf

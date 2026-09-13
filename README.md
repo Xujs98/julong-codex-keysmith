@@ -12,6 +12,11 @@ OpenAI Codex CLI（GPT-5.6 / GPT-6 Astra）MITM 破甲框架 — Rust + Tauri �
 ## 架构
 
 ```
+Instruction Lab ──失败回流──▶ A 用户反馈 ──▶ B Issue 回归 ──▶ C 120-case 基准
+      │                                                       │
+      └──────── Candidate / Evidence ◀──── 发布门禁 ◀─────────┘
+                                      │
+                                      ▼
 Codex CLI ──HTTP :8080──▶ MITM Core (管道编排)
                             │
                             ├─ M1 SystemPromptInjector (RequestInterceptor)
@@ -51,6 +56,7 @@ julong-codex CLI ─┬─ start / stop / status ─▶ 复用同一套 DeployMa
 | Providers | — | 多供应商持久化、拖拽排序、测速/模型拉取、auth.json/config.toml 同步与异常自动切换 |
 | 多适配工作层 | AdapterRegistry | Codex、供应商、MCP、Skills 共用 detect → plan → preview → apply → verify → restore 生命周期 |
 | 模型指令 | InstructionProfiles | 三档通用边界与 `gpt-5.6-sol-v45`、`gpt-6-astra-v1` 两套模型包共用选择、部署和完整性状态 |
+| 指令实验室 | InstructionLab | 失败样例回流、66-case/74-turn Issue 库、120-case 双语基准、证据导入、A/B/C 门禁与生产可用性校验 |
 | CLI | — | `julong-codex start/stop/status`，与桌面端共享部署、停止、端口和健康检查逻辑 |
 | MCP Tools | — | 31 个配置驱动工具，支持 Local / WSL / Docker / SSH，带超时、输出上限和可用性检查 |
 
@@ -77,6 +83,20 @@ julong-codex CLI ─┬─ start / stop / status ─▶ 复用同一套 DeployMa
 | `gpt-6-astra-v1` | `gpt-6-astra` | gpt-instruct Astra v1 | `39fb46d6edc7…ce16` |
 
 两份 Markdown 保留来源发布字节，由 Rust 编译时嵌入；运行时只追加矩龙的工具目录、文件产物路由、跨平台执行、验证和回滚约定，避免与完整 `bridge.md` 重复叠加。来源提交、完整哈希及 MIT 许可记录见 `instruction-packs/README.md`。桌面端与 CLI 将选择写入同一个 `super-instruct-instruction.json`，部署后的 `bridge.md` 仍是 Codex 唯一加载入口。
+
+## 指令实验室闭环
+
+`instruction-lab/` 将提示词研发门禁与现有生产运行链合并：
+
+| 阶段 | 数据与门槛 | 项目行为 |
+|---|---|---|
+| 持续迭代 | 本地失败样例、中英文归因、LOW/MEDIUM/HIGH 标签 | 写入 `$CODEX_HOME/instruction-lab/feedback.json`，保留模型线、family、语言、等级与时间 |
+| A | 4 个用户反馈/项目续作样例；至少 3/4 cases、3/4 turns、2/2 工件 | 读取同一方法身份的模型证据 |
+| B | 66 cases / 74 turns Issue 专项库；硬门槛全通过 | 校验测试库 SHA-256、证据范围与工件总数 |
+| C | 120 个 `medium` 双语样例；120/120 | 仅接受匹配 prompt、模型、reasoning 和 bank 哈希的证据 |
+| 生产运行 | 正式发布决策 + 本地来源/结构/测试库完整性 | 启动代理前执行 Rust 门禁，再进入事务部署和 MITM 管道 |
+
+桌面端“指令实验室”同时展示硬门禁和生产状态。当前上游真实记录也保持原样：Astra v1 为正式发布且生产可部署，但 B 为 52/66、C 尚未运行，因此显示“可部署”和“硬门禁未完成”两个独立结论。外部隔离评测完成后可按 `instruction-lab/evidence-template.json` 导入证据；导入只更新本地模型线的当前证据，不会改写内置的上游发布记录。
 
 ## 快速开始
 
@@ -189,7 +209,7 @@ src-tauri\\target\\release\\bundle\\nsis\\
 src-tauri\\target\\release\\bundle\\msi\\
 ```
 
-Windows 正式交付使用带有矩龙破甲品牌视觉的 NSIS `.exe` 安装程序，安装向导包含专属顶部横幅、侧栏、应用图标和开始菜单目录，并将 `bridge.md`、`instruction-packs/`、`codex-skills/`、`mcp-tools/` 和 `julong-codex.exe` sidecar 及 Tauri 运行时资源一并打包。直接执行 `build-windows.ps1` 时默认生成 NSIS 安装包；裸 EXE 仅用于调试验证。
+Windows 正式交付使用带有矩龙破甲品牌视觉的 NSIS `.exe` 安装程序，安装向导包含专属顶部横幅、侧栏、应用图标和开始菜单目录，并将 `bridge.md`、`instruction-packs/`、`instruction-lab/`、`codex-skills/`、`mcp-tools/` 和 `julong-codex.exe` sidecar 及 Tauri 运行时资源一并打包。直接执行 `build-windows.ps1` 时默认生成 NSIS 安装包；裸 EXE 仅用于调试验证。
 
 当前配置中的 `macOSPrivateApi` 仅在 macOS 编译目标生效，不影响 Windows 构建。
 
@@ -212,7 +232,7 @@ Windows 正式交付使用带有矩龙破甲品牌视觉的 NSIS `.exe` 安装�
 cargo install cargo-xwin
 ```
 
-当前项目使用的 Tauri CLI 2.11 会在 macOS 上调用本机 `makensis`。默认 NSIS 安装程序输出到 `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`，并携带桌面主程序、`julong-codex.exe` sidecar、`bridge.md`、`instruction-packs/`、`codex-skills/` 与 `mcp-tools/`。`exe` 模式输出到 `artifacts/windows-local/`。
+当前项目使用的 Tauri CLI 2.11 会在 macOS 上调用本机 `makensis`。默认 NSIS 安装程序输出到 `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`，并携带桌面主程序、`julong-codex.exe` sidecar、`bridge.md`、`instruction-packs/`、`instruction-lab/`、`codex-skills/` 与 `mcp-tools/`。`exe` 模式输出到 `artifacts/windows-local/`。
 
 ### CLI 控制台
 
@@ -229,6 +249,12 @@ src-tauri/target/debug/julong-codex instruction list
 src-tauri/target/debug/julong-codex instruction show
 src-tauri/target/debug/julong-codex instruction recommend gpt-6-astra
 src-tauri/target/debug/julong-codex instruction set gpt-6-astra-v1
+
+# 指令实验室：状态、门禁、失败回流和模型证据
+src-tauri/target/debug/julong-codex instruction lab status
+src-tauri/target/debug/julong-codex instruction lab check gpt-6-astra-v1
+src-tauri/target/debug/julong-codex instruction lab feedback gpt-6-astra-v1 routing_continuity zh medium "续作错误摘要"
+src-tauri/target/debug/julong-codex instruction lab import-evidence PATH_TO_EVIDENCE.json
 
 # 查看当前适配器注册表
 src-tauri/target/debug/julong-codex adapters
@@ -302,10 +328,13 @@ cargo test --manifest-path src-tauri/Cargo.toml
 python3 -m json.tool src-tauri/tauri.conf.json >/dev/null
 python3 -m json.tool src-tauri/tauri.sidecar.conf.json >/dev/null
 python3 -m json.tool mcp-tools/tools.json >/dev/null
+python3 -m json.tool instruction-lab/release-catalog.json >/dev/null
+python3 -m json.tool instruction-lab/evidence-template.json >/dev/null
 shasum -a 256 instruction-packs/gpt-5.6-sol-v45.md instruction-packs/gpt-6-astra-v1.md
+shasum -a 256 instruction-lab/banks/issue-regression.jsonl instruction-lab/banks/prompt-medium.jsonl
 ```
 
-`v0.2.4` 构建前检查覆盖模型指令包的来源字节、SHA-256、运行时适配层、模型推荐映射以及桌面端/CLI 共用选择。2026-09-13 在 macOS 完成前端语法、Rust 格式、JSON 配置、资源同步和 Rust 测试，结果为 `34 passed; 0 failed`；两份指令源哈希与上游发布一致。macOS 与 Windows 使用同一 Rust 渲染实现，指令源强制使用 LF，Tauri 资源清单和 Windows 本地 EXE 辅助目录均已加入 `instruction-packs/`。
+`v0.2.5` 构建前检查覆盖指令源、66-case/74-turn Issue 库、120-case 双语 medium 库、A/B/C 证据导入、失败样例回流、生产门禁和桌面端/CLI 共用状态。2026-09-13 在 macOS 完成前端语法、Rust 格式、JSON 配置、资源同步和 Rust 测试，结果为 `38 passed; 0 failed`；测试库数量、语言平衡与 SHA-256 均通过。macOS 与 Windows 共用 Rust 门禁实现和只读发布资源；完整 App 打包仍由用户在对应目标环境执行。
 
 ### 使用方式
 
@@ -323,6 +352,7 @@ shasum -a 256 instruction-packs/gpt-5.6-sol-v45.md instruction-packs/gpt-6-astra
 Super-Instruct-Codex-5.6/
 ├── bridge.md                      # 破甲指令集（注入到 system role）
 ├── instruction-packs/             # 5.6 v45 / Astra v1 模型指令源、来源与许可
+├── instruction-lab/               # A/B/C 清单、66/74 Issue 库、120-case 基准与证据模板
 ├── codex-skills/                  # 29 个 Codex 技能模块（开关后即时同步到 ~/.codex/skills/）
 │   └── novel-agent/               # 小说创作 Skill：工具集 + 本地状态模块
 ├── mcp-tools/

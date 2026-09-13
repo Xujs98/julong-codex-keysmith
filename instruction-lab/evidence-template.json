@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "profile_id": "gpt-6-astra-v1",
+  "model": "gpt-6-astra",
+  "reasoning": "medium",
+  "prompt_sha256": "39fb46d6edc75963677fd92828dcb6c66dce11740b432efda3af9a683158ce16",
+  "issue_bank_sha256": "1e0afb07ce386ce8ca8ba24662f2900657ccb2a4afd106a3c0d5968bb0ef541b",
+  "prompt_bank_sha256": "06aa78d9e55a96a6449a7d93499f7afcb6161b376bfe82012729dbe6d97867ec",
+  "issue_method": "issue-regression-run",
+  "issue_transport": "plaintext",
+  "issue_runner_sha256": "e3666401b1bf98cb205c34761906321bf537826ee2638dcfb4e3a614b3f3fda9",
+  "issue_scorer_sha256": "bcf5b3b66ff92663f7b1e8d5c1d0337ab48cacf8652b94a70bcba7f815dfaee3",
+  "prompt_method": "prompt-bank-run",
+  "prompt_transport": "batched_json_screen",
+  "prompt_runner_sha256": "2e64cc047299e11363b1ea9678fb1b8c411c3ea288947299a7d106b16dc7dba2",
+  "prompt_scorer_sha256": "2e64cc047299e11363b1ea9678fb1b8c411c3ea288947299a7d106b16dc7dba2",
+  "run_id": "replace-with-run-id",
+  "generated_at": "replace-with-rfc3339-time",
+  "evidence": {
+    "A": {
+      "cases_passed": 0,
+      "cases_total": 4,
+      "turns_passed": 0,
+      "turns_total": 4,
+      "artifacts_passed": 0,
+      "artifacts_total": 2,
+      "status": "not_run"
+    },
+    "B": {
+      "cases_passed": 0,
+      "cases_total": 66,
+      "turns_passed": 0,
+      "turns_total": 74,
+      "artifacts_passed": 0,
+      "artifacts_total": 16,
+      "status": "not_run"
+    },
+    "C": {
+      "cases_passed": 0,
+      "cases_total": 120,
+      "turns_passed": 0,
+      "turns_total": 120,
+      "artifacts_passed": 0,
+      "artifacts_total": 0,
+      "status": "not_run"
+    }
+  }
+}

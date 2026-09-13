@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>矩龙破甲 · v0.2.4</title>
+    <title>矩龙破甲 · v0.2.5</title>
     <link rel="stylesheet" href="styles.css">
     <script type="module" src="app.js"></script>
 </head>
@@ -14,7 +14,7 @@
     <div class="tb-logo" data-tauri-drag-region>
         <img class="tb-logo-image" src="assets/molong-logo.png" alt="矩龙破甲" data-tauri-drag-region>
         <span class="tb-logo-text" data-tauri-drag-region>矩龙破甲</span>
-        <span class="tb-logo-sub" data-tauri-drag-region>Desktop Edition · v0.2.4</span>
+        <span class="tb-logo-sub" data-tauri-drag-region>Desktop Edition · v0.2.5</span>
     </div>
     <div class="tb-spacer" data-tauri-drag-region></div>
     <button class="tb-btn" id="tb-minimize" title="最小化">—</button>
@@ -93,6 +93,10 @@
             <div class="nav-item" id="nav-config">
                 <span class="nav-icon">⚙</span> 配置管理
             </div>
+            <div class="nav-item" id="nav-lab">
+                <span class="nav-icon">◇</span> 指令实验室
+                <span class="nav-badge" id="nav-lab-feedback">0</span>
+            </div>
             <div class="nav-item" id="nav-providers">
                 <span class="nav-icon">⇄</span> 供应商
                 <span class="nav-badge" id="nav-provider-count">0</span>
@@ -161,6 +165,12 @@
                 <button class="btn" id="btn-refresh">刷新状态</button>
             </div>
         </div>
+        <div class="main-head" id="head-lab" style="display:none;">
+            <div><span class="main-title">指令实验室</span><span class="head-subtitle">迭代、A/B/C 门禁与生产发布</span></div>
+            <div class="main-actions">
+                <button class="btn" id="btn-lab-refresh" type="button">刷新证据</button>
+            </div>
+        </div>
         <div class="main-head" id="head-providers" style="display:none;">
             <div><span class="main-title">供应商</span><span class="head-subtitle">多中转优先级与自动切换</span></div>
             <div class="main-actions">
@@ -220,7 +230,7 @@
             <div class="dash-pad">
                 <section class="hero-card">
                     <div class="hero-copy">
-                        <div class="eyebrow">矩龙破甲 · v0.2.4</div>
+                        <div class="eyebrow">矩龙破甲 · v0.2.5</div>
                         <h1>把每一次交互，<span>变成可控能力。</span></h1>
                         <p>本地代理、指令增强与 Skills 工作流集中管理。数据留在本机，状态一目了然。</p>
                         <div class="hero-actions">
@@ -353,6 +363,81 @@
                     <div class="cfg-line"><div class="cfg-k">代理端口</div><div class="cfg-v">127.0.0.1:8080</div></div>
                     <div class="cfg-line"><div class="cfg-k">SSE 修复</div><div class="cfg-v amber">已启用（response.completed 包装）</div></div>
                 </div>
+            </div>
+        </div>
+
+        <!-- 指令实验室 -->
+        <div class="main-content" id="page-lab">
+            <div class="lab-scroll">
+                <section class="lab-pipeline" id="lab-pipeline" aria-label="指令发布流水线">
+                    <div class="log-empty">加载流水线…</div>
+                </section>
+
+                <section class="lab-summary-grid">
+                    <article class="lab-summary-item"><span>A 用户反馈</span><strong>4</strong><small>3/4 cases + 2/2 工件</small></article>
+                    <article class="lab-summary-item"><span>B Issue 回归</span><strong id="lab-issue-count">--</strong><small id="lab-issue-detail">读取测试库</small></article>
+                    <article class="lab-summary-item"><span>C 双语基准</span><strong id="lab-prompt-count">--</strong><small id="lab-prompt-detail">读取测试库</small></article>
+                    <article class="lab-summary-item"><span>失败回流</span><strong id="lab-feedback-count">0</strong><small>本地记录</small></article>
+                </section>
+
+                <section class="lab-section">
+                    <div class="lab-section-head">
+                        <div><strong>模型发布线</strong><span>硬门禁与生产部署状态独立记录</span></div>
+                        <span class="lab-source-state" id="lab-source-state">读取来源…</span>
+                    </div>
+                    <div class="lab-release-list" id="lab-release-list">
+                        <div class="log-empty">加载发布证据…</div>
+                    </div>
+                </section>
+
+                <section class="lab-feedback-panel">
+                    <div class="lab-section-head">
+                        <div><strong>失败样例回流</strong><span>进入下一轮 Candidate 的本地归因记录</span></div>
+                    </div>
+                    <div class="lab-feedback-form">
+                        <div class="lab-field">
+                            <span>模型线</span>
+                            <div class="lab-choice-row" id="lab-feedback-profile" role="radiogroup" aria-label="模型线">
+                                <button type="button" class="lab-choice" data-value="gpt-5.6-sol-v45" role="radio" aria-checked="false">5.6 v45</button>
+                                <button type="button" class="lab-choice active" data-value="gpt-6-astra-v1" role="radio" aria-checked="true">Astra v1</button>
+                            </div>
+                        </div>
+                        <div class="lab-field lab-field-wide">
+                            <span>失败分类</span>
+                            <div class="lab-choice-row lab-family-row" id="lab-feedback-family" role="radiogroup" aria-label="失败分类">
+                                <button type="button" class="lab-choice" data-value="execution_completion" role="radio" aria-checked="false">执行完成</button>
+                                <button type="button" class="lab-choice active" data-value="routing_continuity" role="radio" aria-checked="true">路由续作</button>
+                                <button type="button" class="lab-choice" data-value="fiction_feedback" role="radio" aria-checked="false">创作反馈</button>
+                                <button type="button" class="lab-choice" data-value="progress_visibility" role="radio" aria-checked="false">进度可见</button>
+                                <button type="button" class="lab-choice" data-value="biology_research" role="radio" aria-checked="false">生物研究</button>
+                                <button type="button" class="lab-choice" data-value="cloud_plaintext_reverse" role="radio" aria-checked="false">云端明文</button>
+                            </div>
+                        </div>
+                        <div class="lab-field">
+                            <span>语言</span>
+                            <div class="lab-choice-row" id="lab-feedback-language" role="radiogroup" aria-label="语言">
+                                <button type="button" class="lab-choice active" data-value="zh" role="radio" aria-checked="true">中文</button>
+                                <button type="button" class="lab-choice" data-value="en" role="radio" aria-checked="false">English</button>
+                            </div>
+                        </div>
+                        <div class="lab-field">
+                            <span>推理等级</span>
+                            <div class="lab-choice-row" id="lab-feedback-level" role="radiogroup" aria-label="推理等级">
+                                <button type="button" class="lab-choice" data-value="low" role="radio" aria-checked="false">LOW</button>
+                                <button type="button" class="lab-choice active" data-value="medium" role="radio" aria-checked="true">MEDIUM</button>
+                                <button type="button" class="lab-choice" data-value="high" role="radio" aria-checked="false">HIGH</button>
+                            </div>
+                        </div>
+                        <label class="lab-field lab-field-wide" for="lab-feedback-summary">
+                            <span>失败摘要</span>
+                            <span class="lab-textarea-shell"><textarea id="lab-feedback-summary" maxlength="2000" rows="3" placeholder="记录输入、观察结果、缺失工件或错误分支"></textarea></span>
+                        </label>
+                        <div class="lab-feedback-actions">
+                            <span class="cfg-msg" id="lab-feedback-message" aria-live="polite"></span>
+                            <button class="btn btn-red solid" id="btn-lab-feedback" type="button">记录失败</button>
+                        </div>
+                    </div>
+                </section>
             </div>
         </div>
 

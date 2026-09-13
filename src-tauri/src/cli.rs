@@ -12,6 +12,7 @@ use crate::extensions::responses_sse::wrap_replacement_as_sse;
 use crate::extensions::sse_parser::UniversalSseParser;
 use crate::extensions::tamper::TamperEngine;
 use crate::instruction;
+use crate::instruction_lab;
 use crate::mcp_tools::{load_catalog, run_mcp_stdio, ToolRunner, USER_CATALOG_FILE};
 use crate::providers;
 use crate::runtime;
@@ -59,6 +60,10 @@ fn print_help() {
     println!("  julong-codex instruction show");
     println!("  julong-codex instruction set PROFILE");
     println!("  julong-codex instruction recommend MODEL");
+    println!("  julong-codex instruction lab status [PROFILE]");
+    println!("  julong-codex instruction lab check PROFILE");
+    println!("  julong-codex instruction lab feedback PROFILE FAMILY LANGUAGE LEVEL SUMMARY");
+    println!("  julong-codex instruction lab import-evidence FILE");
     println!("  julong-codex adapters");
     println!("  julong-codex mcp list [BACKEND_OPTIONS]");
     println!("  julong-codex mcp doctor [BACKEND_OPTIONS]");
@@ -111,6 +116,10 @@ fn command_start() -> i32 {
         .and_then(|path| std::fs::read_to_string(path).ok())
         .unwrap_or_else(|| BRIDGE_FALLBACK.to_string());
     let selected_profile = instruction::selected(manager.codex_home());
+    if let Err(error) = instruction_lab::ensure_deployable(selected_profile.id) {
+        eprintln!("[FAIL] 生产门禁失败: {error}");
+        return 1;
+    }
     let bridge = match instruction::render(&base_bridge, selected_profile.id) {
         Ok(value) => value,
         Err(error) => {
@@ -367,8 +376,171 @@ fn command_instruction(args: &[String]) -> i32 {
             }
             0
         }
+        "lab" => command_instruction_lab(&args[1..], manager),
         _ => {
             eprintln!("未知 instruction 操作: {action}");
+            2
+        }
+    }
+}
+
+fn print_gate_report(report: &instruction_lab::GateReport) {
+    println!(
+        "{} ({}) model={} reasoning={}",
+        report.profile_id, report.profile_name, report.model, report.reasoning
+    );
+    println!(
+        "source: {} bytes={} structure={}/{} banks={}",
+        if report.source_integrity {
+            "PASS"
+        } else {
+            "FAIL"
+        },
+        report.source_bytes,
+        report.structural_passed,
+        report.structural_total,
+        if report.bank_integrity {
+            "PASS"
+        } else {
+            "FAIL"
+        }
+    );
+    for stage in [&report.a, &report.b, &report.c] {
+        println!(
+            "{}: cases {}/{} turns {}/{} artifacts {}/{} => {}",
+            stage.id,
+            stage.evidence.cases_passed,
+            stage.evidence.cases_total,
+            stage.evidence.turns_passed,
+            stage.evidence.turns_total,
+            stage.evidence.artifacts_passed,
+            stage.evidence.artifacts_total,
+            if stage.passed { "PASS" } else { "INCOMPLETE" }
+        );
+    }
+    println!(
+        "hard gate: {}",
+        if report.hard_gate_complete {
+            "COMPLETE"
+        } else {
+            "INCOMPLETE"
+        }
+    );
+    println!(
+        "production: {} ({})",
+        if report.production_deployable {
+            "DEPLOYABLE"
+        } else {
+            "BLOCKED"
+        },
+        report.release_decision
+    );
+    println!("evidence: {}", report.evidence_origin);
+    if let Some(path) = &report.report_path {
+        println!("report: {path}");
+    }
+}
+
+fn command_instruction_lab(args: &[String], manager: Option<DeployManager>) -> i32 {
+    let Some(manager) = manager else {
+        eprintln!("[FAIL] Codex 配置目录未找到");
+        return 1;
+    };
+    let action = args.first().map(String::as_str).unwrap_or("status");
+    match action {
+        "status" => match instruction_lab::snapshot(manager.codex_home()) {
+            Ok(snapshot) => {
+                println!(
+                    "banks: A=4 B={}/{} turns C={} feedback={}",
+                    snapshot.issue_bank.cases,
+                    snapshot.issue_bank.turns,
+                    snapshot.prompt_bank.cases,
+                    snapshot.feedback_count
+                );
+                let filter = args.get(1).map(String::as_str);
+                for report in snapshot
+                    .releases
+                    .iter()
+                    .filter(|report| filter.map_or(true, |id| id == report.profile_id))
+                {
+                    print_gate_report(report);
+                }
+                0
+            }
+            Err(error) => {
+                eprintln!("[FAIL] {error}");
+                1
+            }
+        },
+        "check" => {
+            let Some(profile) = args.get(1) else {
+                eprintln!("用法: julong-codex instruction lab check PROFILE");
+                return 2;
+            };
+            match instruction_lab::run_gate(manager.codex_home(), profile) {
+                Ok(report) => {
+                    print_gate_report(&report);
+                    if report.production_deployable {
+                        0
+                    } else {
+                        1
+                    }
+                }
+                Err(error) => {
+                    eprintln!("[FAIL] {error}");
+                    1
+                }
+            }
+        }
+        "feedback" => {
+            if args.len() < 6 {
+                eprintln!(
+                    "用法: julong-codex instruction lab feedback PROFILE FAMILY LANGUAGE LEVEL SUMMARY"
+                );
+                return 2;
+            }
+            let summary = args[5..].join(" ");
+            match instruction_lab::record_feedback(
+                manager.codex_home(),
+                &args[1],
+                &args[2],
+                &args[3],
+                &args[4],
+                &summary,
+            ) {
+                Ok(record) => {
+                    println!("[OK] 失败样例已记录: {}", record.id);
+                    println!(
+                        "profile={} family={} language={} level={}",
+                        record.profile_id, record.family, record.language, record.level
+                    );
+                    0
+                }
+                Err(error) => {
+                    eprintln!("[FAIL] {error}");
+                    2
+                }
+            }
+        }
+        "import-evidence" => {
+            let Some(path) = args.get(1) else {
+                eprintln!("用法: julong-codex instruction lab import-evidence FILE");
+                return 2;
+            };
+            match instruction_lab::import_evidence(manager.codex_home(), Path::new(path)) {
+                Ok(report) => {
+                    println!("[OK] 模型评测证据已导入");
+                    print_gate_report(&report);
+                    0
+                }
+                Err(error) => {
+                    eprintln!("[FAIL] {error}");
+                    2
+                }
+            }
+        }
+        _ => {
+            eprintln!("未知 instruction lab 操作: {action}");
             2
         }
     }
