@@ -58,6 +58,7 @@ fn print_help() {
     println!("  julong-codex instruction list");
     println!("  julong-codex instruction show");
     println!("  julong-codex instruction set PROFILE");
+    println!("  julong-codex instruction recommend MODEL");
     println!("  julong-codex adapters");
     println!("  julong-codex mcp list [BACKEND_OPTIONS]");
     println!("  julong-codex mcp doctor [BACKEND_OPTIONS]");
@@ -113,7 +114,7 @@ fn command_start() -> i32 {
     let bridge = match instruction::render(&base_bridge, selected_profile.id) {
         Ok(value) => value,
         Err(error) => {
-            eprintln!("[FAIL] 指令边界配置无效: {error}");
+            eprintln!("[FAIL] 模型指令配置无效: {error}");
             return 1;
         }
     };
@@ -265,7 +266,7 @@ fn command_status() -> i32 {
     );
     println!("transaction: {}", if pending { "PENDING" } else { "clean" });
     println!("relay: {relay}");
-    println!("instruction boundary: {} ({})", profile.id, profile.name);
+    println!("model instruction: {} ({})", profile.id, profile.name);
     let consistent = manager.is_some()
         && !pending
         && if running {
@@ -296,9 +297,10 @@ fn command_instruction(args: &[String]) -> i32 {
                 .unwrap_or_else(|| instruction::DEFAULT_PROFILE.to_string());
             for item in instruction::list_profiles() {
                 println!(
-                    "{}\t{}\t{}{}",
+                    "{}\t{}\t{}\t{}{}",
                     item.id,
                     item.name,
+                    item.model_family,
                     item.summary,
                     if item.id == selected {
                         " [selected]"
@@ -317,6 +319,13 @@ fn command_instruction(args: &[String]) -> i32 {
             let item = instruction::selected(manager.codex_home());
             println!("{} ({})", item.id, item.name);
             println!("{}", item.summary);
+            println!("type: {}", item.kind);
+            println!("model: {}", item.model_family);
+            println!("version: {}", item.prompt_version);
+            if !item.source_sha256.is_empty() {
+                println!("source sha256: {}", item.source_sha256);
+                println!("source bytes: {}", item.source_bytes);
+            }
             println!("stages: {}", item.stages.join(" -> "));
             0
         }
@@ -331,7 +340,8 @@ fn command_instruction(args: &[String]) -> i32 {
             };
             match instruction::save(manager.codex_home(), id) {
                 Ok(item) => {
-                    println!("[OK] 指令边界已设置为 {} ({})", item.id, item.name);
+                    println!("[OK] 模型指令已设置为 {} ({})", item.id, item.name);
+                    println!("[OK] 适配模型: {}", item.model_family);
                     println!("[OK] 重新部署或下次启动代理时生效");
                     0
                 }
@@ -340,6 +350,22 @@ fn command_instruction(args: &[String]) -> i32 {
                     2
                 }
             }
+        }
+        "recommend" => {
+            let Some(model) = args.get(1) else {
+                eprintln!("用法: julong-codex instruction recommend MODEL");
+                return 2;
+            };
+            if let Some(id) = instruction::recommended_profile_id(model) {
+                let item = instruction::profile(id).expect("recommended profile must exist");
+                println!("{}\t{}\t{}", item.id, item.name, item.effect);
+                println!("set: julong-codex instruction set {}", item.id);
+            } else {
+                let item = instruction::profile(instruction::DEFAULT_PROFILE)
+                    .expect("default profile must exist");
+                println!("{}\t{}\t当前模型使用通用指令", item.id, item.name);
+            }
+            0
         }
         _ => {
             eprintln!("未知 instruction 操作: {action}");

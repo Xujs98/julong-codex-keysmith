@@ -335,7 +335,7 @@ async fn start_proxy(
     let profile = instruction::selected(manager.codex_home());
     let instructions = instruction::render(&base_instructions, profile.id)?;
     tracing::info!(
-        "start_proxy: instruction boundary = {} ({})",
+        "start_proxy: model instruction = {} ({})",
         profile.id,
         profile.name
     );
@@ -621,7 +621,7 @@ async fn deploy_bridge(app: tauri::AppHandle) -> Result<String, String> {
     let profile = instruction::selected(manager.codex_home());
     let bridge_md = instruction::render(&base_bridge_md, profile.id)?;
     tracing::info!(
-        "deploy_bridge: instruction boundary = {} ({})",
+        "deploy_bridge: model instruction = {} ({})",
         profile.id,
         profile.name
     );
@@ -787,7 +787,7 @@ fn set_instruction_profile(profile: String) -> Result<serde_json::Value, String>
         "ok": true,
         "selected": selected.id,
         "name": selected.name,
-        "message": "指令边界已保存；重新部署或下次启动代理时生效",
+        "message": "模型指令已保存；重新部署或下次启动代理时生效",
     }))
 }
 

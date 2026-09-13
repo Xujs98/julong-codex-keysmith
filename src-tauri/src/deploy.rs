@@ -657,7 +657,7 @@ impl DeployManager {
             "部署 bridge.md 并按启用列表同步 Skills".to_string(),
             "写入带 SHA-256 的部署清单并清理事务日志".to_string(),
             format!(
-                "使用指令边界：{}（{}）",
+                "使用模型指令：{}（{}）",
                 instruction_profile.name, instruction_profile.effect
             ),
         ];

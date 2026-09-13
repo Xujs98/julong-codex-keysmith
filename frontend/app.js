@@ -745,25 +745,43 @@ async function loadInstructionProfiles() {
             const button = document.createElement('button');
             button.type = 'button';
             button.className = `instruction-profile-card${profile.id === selected ? ' active' : ''}`;
+            button.classList.add(profile.kind === 'model-pack' ? 'model-pack' : 'boundary-profile');
             button.dataset.profile = profile.id;
             button.setAttribute('role', 'radio');
             button.setAttribute('aria-checked', String(profile.id === selected));
+            button.setAttribute('aria-label', `${profile.name}，适配 ${profile.model_family}，${profile.effect}`);
             const title = document.createElement('strong');
             title.textContent = profile.name;
+            const meta = document.createElement('small');
+            meta.className = 'profile-meta';
+            meta.textContent = profile.kind === 'model-pack'
+                ? `${profile.model_family} · ${profile.prompt_version} · ${profile.source_bytes} B`
+                : `${profile.model_family} · ${profile.prompt_version}`;
             const summary = document.createElement('span');
             summary.textContent = profile.summary;
             const stages = document.createElement('small');
+            stages.className = 'profile-stages';
             stages.textContent = (profile.stages || []).join(' → ');
             const mark = document.createElement('i');
             mark.setAttribute('aria-hidden', 'true');
             mark.textContent = profile.id === selected ? '✓' : '';
-            button.append(title, summary, stages, mark);
+            button.append(title, meta, summary, stages, mark);
             button.addEventListener('click', () => selectInstructionProfile(profile.id));
+            button.addEventListener('keydown', event => {
+                if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+                event.preventDefault();
+                const cards = [...el.instructionProfileGrid.querySelectorAll('.instruction-profile-card')];
+                const index = cards.indexOf(button);
+                const columns = window.matchMedia('(max-width: 760px)').matches ? 1 : 3;
+                const offset = ({ ArrowLeft: -1, ArrowRight: 1, ArrowUp: -columns, ArrowDown: columns })[event.key];
+                cards[(index + offset + cards.length) % cards.length]?.focus();
+            });
             el.instructionProfileGrid.appendChild(button);
         });
         const current = profiles.find(item => item.id === selected);
         if (current && el.instructionProfileNote) {
-            el.instructionProfileNote.textContent = `${current.name}：${current.effect}。保存后重新部署或重启代理生效。`;
+            const source = current.source_sha256 ? ` 来源 SHA-256：${current.source_sha256.slice(0, 12)}…。` : '';
+            el.instructionProfileNote.textContent = `${current.name}：${current.effect}。${source}保存后重新部署或重启代理生效。`;
         }
     } catch (e) {
         if (el.instructionProfileNote) el.instructionProfileNote.textContent = `读取指令边界失败：${e}`;

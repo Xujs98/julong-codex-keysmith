@@ -1,13 +1,13 @@
 # 矩龙破甲
 
-OpenAI Codex CLI (GPT-5.6) MITM 破甲框架 — Rust + Tauri 桌面应用。
+OpenAI Codex CLI（GPT-5.6 / GPT-6 Astra）MITM 破甲框架 — Rust + Tauri 桌面应用。
 
 > 本仓库是上游项目的二次开发版本，现由 **Xujs98** 在个人仓库中持续维护：
 > [Xujs98/julong-codex-keysmith](https://github.com/Xujs98/julong-codex-keysmith)。
 
 ![矩龙破甲项目界面](docs/images/molong-dashboard.png)
 
-通过本地 MITM 代理拦截 Codex CLI 的 API 请求，在管道中执行注入、篡改、记忆和监控，配合 bridge.md 指令集实现竞赛沙箱模式。
+通过本地 MITM 代理拦截 Codex CLI 的 API 请求，在管道中执行注入、篡改、记忆和监控，配合通用 `bridge.md` 与模型专用指令包实现竞赛沙箱模式。
 
 ## 架构
 
@@ -15,7 +15,7 @@ OpenAI Codex CLI (GPT-5.6) MITM 破甲框架 — Rust + Tauri 桌面应用。
 Codex CLI ──HTTP :8080──▶ MITM Core (管道编排)
                             │
                             ├─ M1 SystemPromptInjector (RequestInterceptor)
-                            │     递归替换 system role → bridge.md
+                            │     递归替换 system role → 当前模型指令
                             │
                             ├─ M4 UniversalSseParser (ResponseParser)
                             │     SSE / JSON / Responses API 通用解析
@@ -42,7 +42,7 @@ julong-codex CLI ─┬─ start / stop / status ─▶ 复用同一套 DeployMa
 
 | 模块 | 角色 | 职责 |
 |---|---|---|
-| M1 Inject | RequestInterceptor | 递归遍历 JSON，替换所有 system role 内容为 bridge.md |
+| M1 Inject | RequestInterceptor | 递归遍历 JSON，将当前通用边界或模型指令包合并到 system role |
 | M4 SSE Parser | ResponseParser | 处理 SSE 流、OpenAI JSON、Responses API，分离思维链与回复 |
 | M3 Tamper | ResponseInterceptor | 35 条多语言正则检测拒绝响应，替换后生成完整 Responses SSE 终态事件 |
 | M5 Memory | ResponseInterceptor | 记录成功交互到 memory.json，提取词汇频率 |
@@ -50,7 +50,7 @@ julong-codex CLI ─┬─ start / stop / status ─▶ 复用同一套 DeployMa
 | Deploy | — | Codex config.toml 备份/修改/恢复，部署 bridge.md + skills/ |
 | Providers | — | 多供应商持久化、拖拽排序、测速/模型拉取、auth.json/config.toml 同步与异常自动切换 |
 | 多适配工作层 | AdapterRegistry | Codex、供应商、MCP、Skills 共用 detect → plan → preview → apply → verify → restore 生命周期 |
-| 指令边界档位 | InstructionProfiles | 标准、结构化工作流、扩展执行边界三档可选；设置写入 `super-instruct-instruction.json` |
+| 模型指令 | InstructionProfiles | 三档通用边界与 `gpt-5.6-sol-v45`、`gpt-6-astra-v1` 两套模型包共用选择、部署和完整性状态 |
 | CLI | — | `julong-codex start/stop/status`，与桌面端共享部署、停止、端口和健康检查逻辑 |
 | MCP Tools | — | 31 个配置驱动工具，支持 Local / WSL / Docker / SSH，带超时、输出上限和可用性检查 |
 
@@ -66,6 +66,17 @@ julong-codex CLI ─┬─ start / stop / status ─▶ 复用同一套 DeployMa
 
 - **生成阶段**：实体归一化（占位符替换）+ 硬输出规则（中英文禁词表）+ 执行连续性（丢弃先前拒绝）+ 强制调度
 - **输出阶段**：CLOUD-AUDIT ROUTING（敏感内容路由到文件系统，绕开客户端审核）+ OUTPUT LOCK
+
+## 模型专用指令包
+
+`instruction-packs/` 内置两套可审计的模型指令源：
+
+| 指令 ID | 适配模型 | 来源版本 | 原始 SHA-256 |
+|---|---|---|---|
+| `gpt-5.6-sol-v45` | `gpt-5.6-sol` | gpt-instruct v45 | `c71c50e2f7a…898f7` |
+| `gpt-6-astra-v1` | `gpt-6-astra` | gpt-instruct Astra v1 | `39fb46d6edc7…ce16` |
+
+两份 Markdown 保留来源发布字节，由 Rust 编译时嵌入；运行时只追加矩龙的工具目录、文件产物路由、跨平台执行、验证和回滚约定，避免与完整 `bridge.md` 重复叠加。来源提交、完整哈希及 MIT 许可记录见 `instruction-packs/README.md`。桌面端与 CLI 将选择写入同一个 `super-instruct-instruction.json`，部署后的 `bridge.md` 仍是 Codex 唯一加载入口。
 
 ## 快速开始
 
@@ -178,7 +189,7 @@ src-tauri\\target\\release\\bundle\\nsis\\
 src-tauri\\target\\release\\bundle\\msi\\
 ```
 
-Windows 正式交付使用带有矩龙破甲品牌视觉的 NSIS `.exe` 安装程序，安装向导包含专属顶部横幅、侧栏、应用图标和开始菜单目录，并将 `bridge.md`、`codex-skills/`、`mcp-tools/` 和 `julong-codex.exe` sidecar 及 Tauri 运行时资源一并打包。直接执行 `build-windows.ps1` 时默认生成 NSIS 安装包；裸 EXE 仅用于调试验证。
+Windows 正式交付使用带有矩龙破甲品牌视觉的 NSIS `.exe` 安装程序，安装向导包含专属顶部横幅、侧栏、应用图标和开始菜单目录，并将 `bridge.md`、`instruction-packs/`、`codex-skills/`、`mcp-tools/` 和 `julong-codex.exe` sidecar 及 Tauri 运行时资源一并打包。直接执行 `build-windows.ps1` 时默认生成 NSIS 安装包；裸 EXE 仅用于调试验证。
 
 当前配置中的 `macOSPrivateApi` 仅在 macOS 编译目标生效，不影响 Windows 构建。
 
@@ -201,7 +212,7 @@ Windows 正式交付使用带有矩龙破甲品牌视觉的 NSIS `.exe` 安装�
 cargo install cargo-xwin
 ```
 
-当前项目使用的 Tauri CLI 2.11 会在 macOS 上调用本机 `makensis`。默认 NSIS 安装程序输出到 `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`，并携带桌面主程序、`julong-codex.exe` sidecar、`bridge.md`、`codex-skills/` 与 `mcp-tools/`。`exe` 模式输出到 `artifacts/windows-local/`。
+当前项目使用的 Tauri CLI 2.11 会在 macOS 上调用本机 `makensis`。默认 NSIS 安装程序输出到 `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`，并携带桌面主程序、`julong-codex.exe` sidecar、`bridge.md`、`instruction-packs/`、`codex-skills/` 与 `mcp-tools/`。`exe` 模式输出到 `artifacts/windows-local/`。
 
 ### CLI 控制台
 
@@ -213,19 +224,19 @@ src-tauri/target/debug/julong-codex start
 src-tauri/target/debug/julong-codex status
 src-tauri/target/debug/julong-codex stop
 
-# 查看或切换模型指令边界
+# 查看、推荐或切换模型指令
 src-tauri/target/debug/julong-codex instruction list
-src-tauri/target/debug/julong-codex instruction set structured
 src-tauri/target/debug/julong-codex instruction show
+src-tauri/target/debug/julong-codex instruction recommend gpt-6-astra
+src-tauri/target/debug/julong-codex instruction set gpt-6-astra-v1
 
 # 查看当前适配器注册表
 src-tauri/target/debug/julong-codex adapters
 ```
 
-配置管理页的“模型指令边界”提供三档选择：标准边界保持当前 bridge；结构化工作流引入
+配置管理页的“模型指令”保留三档通用选择：标准边界保持当前 bridge；结构化工作流引入
 `OBJECTIVE → CONTEXT → OUTPUT → CHECK`；扩展执行边界引入
-`OBJECTIVE → PLAN → APPLY → VERIFY → ROLLBACK`。档位只改变注入的工作链提示，不改变
-宿主工具权限。保存后点击“部署 bridge.md”或重启代理使其生效，启动流程会自动检测已部署档位。
+`OBJECTIVE → PLAN → APPLY → VERIFY → ROLLBACK`。同一区域新增 5.6 v45 与 Astra v1 模型包卡片，展示适配模型、版本、字节数和来源哈希。CLI 的 `instruction recommend MODEL` 只给出推荐，`instruction set PROFILE` 才会保存选择。保存后点击“部署 bridge.md”或重启代理使其生效，启动流程会自动检测已部署指令。
 
 macOS Release 会将 CLI 放在 `矩龙破甲.app/Contents/MacOS/julong-codex`。需要全局命令时，可在安装 App 后创建软链接：
 
@@ -291,9 +302,10 @@ cargo test --manifest-path src-tauri/Cargo.toml
 python3 -m json.tool src-tauri/tauri.conf.json >/dev/null
 python3 -m json.tool src-tauri/tauri.sidecar.conf.json >/dev/null
 python3 -m json.tool mcp-tools/tools.json >/dev/null
+shasum -a 256 instruction-packs/gpt-5.6-sol-v45.md instruction-packs/gpt-6-astra-v1.md
 ```
 
-`v0.2.3` 构建前检查覆盖桌面端和 CLI 共用的 Responses SSE 包装模块；回归测试逐字段验证 `response.completed.response.usage` 的 token 总数与明细，并验证替换文本的 JSON 转义。2026-09-11 在 macOS 完成上述检查：前端语法、Rust 格式、JSON 配置全部通过，Rust 测试结果为 `32 passed; 0 failed`。macOS 与 Windows 使用同一 Rust 实现，本次不变更平台资源或打包脚本。
+`v0.2.4` 构建前检查覆盖模型指令包的来源字节、SHA-256、运行时适配层、模型推荐映射以及桌面端/CLI 共用选择。2026-09-13 在 macOS 完成前端语法、Rust 格式、JSON 配置、资源同步和 Rust 测试，结果为 `34 passed; 0 failed`；两份指令源哈希与上游发布一致。macOS 与 Windows 使用同一 Rust 渲染实现，指令源强制使用 LF，Tauri 资源清单和 Windows 本地 EXE 辅助目录均已加入 `instruction-packs/`。
 
 ### 使用方式
 
@@ -310,6 +322,7 @@ python3 -m json.tool mcp-tools/tools.json >/dev/null
 ```
 Super-Instruct-Codex-5.6/
 ├── bridge.md                      # 破甲指令集（注入到 system role）
+├── instruction-packs/             # 5.6 v45 / Astra v1 模型指令源、来源与许可
 ├── codex-skills/                  # 29 个 Codex 技能模块（开关后即时同步到 ~/.codex/skills/）
 │   └── novel-agent/               # 小说创作 Skill：工具集 + 本地状态模块
 ├── mcp-tools/

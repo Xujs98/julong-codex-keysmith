@@ -10,6 +10,18 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ProjectRoot
 
+$RequiredInstructionPacks = @(
+    "instruction-packs\gpt-5.6-sol-v45.md",
+    "instruction-packs\gpt-6-astra-v1.md",
+    "instruction-packs\LICENSE.gpt-instruct"
+)
+foreach ($RelativePath in $RequiredInstructionPacks) {
+    if (-not (Test-Path (Join-Path $ProjectRoot $RelativePath))) {
+        Write-Host "Missing instruction pack resource: $RelativePath" -ForegroundColor Red
+        exit 1
+    }
+}
+
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
     Write-Host "Windows bundles must be built on Windows." -ForegroundColor Red
     exit 1
@@ -43,6 +55,7 @@ $Bundles = switch ($Mode) {
 Write-Host "=== Windows Release Build ===" -ForegroundColor Cyan
 Write-Host "Target : $Target"
 Write-Host "Bundles: $Bundles"
+Write-Host "Instruction packs: gpt-5.6-sol-v45, gpt-6-astra-v1"
 
 Write-Host "[1/5] Installing JavaScript dependencies..." -ForegroundColor Yellow
 if (Test-Path "package-lock.json") {

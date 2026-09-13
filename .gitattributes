@@ -1,0 +1,2 @@
+instruction-packs/*.md text eol=lf
+instruction-packs/LICENSE.gpt-instruct text eol=lf
