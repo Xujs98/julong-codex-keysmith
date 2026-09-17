@@ -1102,11 +1102,18 @@ $('btn-recover')?.addEventListener('click', async () => {
 
 el.btnRestore.addEventListener('click', async () => {
     try {
-        const msg = await invoke('restore_codex');
+        const environments = window.JulongEnvironments.selectedIds();
+        el.btnRestore.disabled = true;
+        el.btnRestore.textContent = '正在还原所选客户端…';
+        const msg = await invoke('restore_codex', { environments });
         showConfigMessage(msg, 'ok');
-        refreshCodexInfo();
+        await Promise.all([refreshCodexInfo(), refreshHealth(), window.JulongEnvironments.refresh()]);
     } catch (e) {
         showConfigMessage(String(e), 'err');
+        await window.JulongEnvironments.refresh();
+    } finally {
+        el.btnRestore.disabled = false;
+        el.btnRestore.textContent = '还原配置';
     }
 });
 

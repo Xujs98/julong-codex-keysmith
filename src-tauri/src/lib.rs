@@ -628,21 +628,8 @@ async fn deploy_bridge(app: tauri::AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn restore_codex() -> Result<String, String> {
-    tracing::info!("restore_codex: starting");
-    let manager = DeployManager::new().ok_or("Codex home not found")?;
-    if runtime::port_is_listening() {
-        return Err("请先停止代理再还原，避免运行时仍使用旧会话".into());
-    }
-    let environment_message = environments::restore()?;
-    let result = manager
-        .restore()
-        .map(|m| format!("{m}；{environment_message}"));
-    match &result {
-        Ok(msg) => tracing::info!("restore_codex: {}", msg),
-        Err(e) => tracing::error!("restore_codex: failed: {}", e),
-    }
-    result
+async fn restore_codex(environments: Vec<String>) -> Result<String, String> {
+    environments::restore_selected_configuration(&environments)
 }
 
 /// 停止桌面/CLI 托管代理并恢复 Codex 的干净环境。
@@ -686,7 +673,7 @@ async fn restore_clean_environment(
         return Err("代理端口仍在监听，已保留 Codex 配置未执行清理".into());
     }
 
-    let environment_message = environments::restore()?;
+    let environment_message = environments::restore_codex_files()?;
     let message = format!("{}；{}", manager.restore_clean()?, environment_message);
     let _ = app.emit("proxy-status", "stopped");
     let _ = app.emit(

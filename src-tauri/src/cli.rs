@@ -998,7 +998,9 @@ fn command_environment(args: &[String]) -> i32 {
             .and_then(|id| environments::detect(id).map(|v| serde_json::json!(v).to_string())),
         "deploy" => environments::deploy(),
         "restore" if runtime::port_is_listening() => Err("请先停止代理再还原环境".into()),
-        "restore" => environments::restore(),
+        "restore" => environments::load().and_then(|s| {
+            environments::restore_selected_configuration(&environments::selected_ids(&s))
+        }),
         _ => Err("用法: julong-codex environment list|detect ID|deploy|restore".into()),
     };
     match result {

@@ -534,7 +534,7 @@ MIT — 见 [LICENSE](LICENSE)
 | GLM 5.3 | `~/.glm`、`~/.zcode` | `GLM_HOME`、`ZCODE_HOME`、`ZHIPU_HOME` | `GLM.md` |
 | Gemini | `~/.gemini` | `GEMINI_HOME`、`GEMINI_DIR` | `GEMINI.md` |
 
-Windows 使用 `%USERPROFILE%` 解析默认目录；macOS 使用 `$HOME`。`~/.julong-codex/environments.json` 保存桌面和 CLI 共用的选择，可用 `JULONG_HOME` 指定独立状态目录。没有选中 Codex 时，共享供应商/进程状态使用其中的 `control/`，它不表示检测到了 Codex。修改已部署的 Codex 路径或启用状态前先停止代理并还原其配置，避免旧目录残留代理设置。
+Windows 使用 `%USERPROFILE%` 解析默认目录；macOS 使用 `$HOME`。`~/.julong-codex/environments.json` 保存桌面和 CLI 共用的选择，可用 `JULONG_HOME` 指定独立状态目录。没有选中 Codex 时，共享供应商/进程状态使用其中的 `control/`，它不表示检测到了 Codex。修改已部署的 Codex 路径前先停止代理并还原其配置；停止代理后可直接改变勾选状态来选择部署或还原对象。取消勾选不会立即删除已部署文件。
 
 每个选中目录额外保存 `.julong/connection.json` 与 `.julong/packs/`。原生说明文件不提前释放模型指令，完整指令在程序开关启用后才由代理注入。Grok、DeepSeek、GLM 的客户端加载约定并不统一；应以所用客户端的自定义上下文、API 地址和请求头设置为准。本次不自动修改未知客户端的鉴权或配置格式，也不扩散写入未选择的 Hermes/ZCode 目录。
 
@@ -556,7 +556,7 @@ cargo build --manifest-path src-tauri/Cargo.toml --bin julong-codex
 ./src-tauri/target/debug/julong-codex environment detect claude
 ```
 
-`environment deploy` / `environment restore` 操作所选原生文件；`start` / `stop` / `status` 沿用共享代理生命周期。运行代理时先 `stop` 再还原。部署清单保存原始字节与目标 SHA-256；异常退出的事务可由“恢复事务”恢复。检测到用户在部署后修改文件时会中止覆盖/还原，保留现场。
+`environment deploy` 操作所选原生文件；`environment restore` 按当前已保存的客户端勾选项还原，选中 Codex 时同时还原其传输配置；`start` / `stop` / `status` 沿用共享代理生命周期。运行代理时先 `stop` 再还原。部署清单保存原始字节与目标 SHA-256；异常退出的事务可由“恢复事务”恢复。检测到用户在部署后修改文件时会中止覆盖/还原，保留现场。
 
 Windows 目标机同样运行上述 Node / Cargo / Python 检查，CLI 改用 `src-tauri\target\debug\julong-codex.exe`。完整交付仍由 Windows 目标机运行 `build-windows.ps1` / `build-windows.cmd` 生成 NSIS `.exe` 安装程序；macOS 的 `build-windows.sh` 仅用于它声明的交叉编译范围，不能替代 Windows 安装验收。六包通过现有 `copy-resources.mjs` 递归复制，并由 Tauri 既有 `instruction-packs/` 资源映射包含，Rust 中另有编译期嵌入，不依赖安装源目录。
 
@@ -581,3 +581,19 @@ Windows 目标机：将 `JULONG_CODEX_TEST_BIN` 环境变量设为已安装的�
 供应商测试改为显式传入临时目录，不再通过全局 `CODEX_HOME` 选择测试目录，避免已保存的环境选择把测试写入真实客户端配置。
 
 验证结果及范围见 `docs/verification-0.2.7.md`。
+
+
+### v0.2.8：按客户端勾选项还原配置
+
+“配置管理 → 部署操作 → 还原配置”按“客户端环境”当前勾选的客户端执行，支持 Codex / GPT-6 Astra、Claude Code、Grok、DeepSeek、GLM、Gemini。可选一个、多个或全部六个；未选中任何客户端时提示先选择，不会执行全量还原。还原不要求重新选择模型指令。
+
+1. 先停止代理，再勾选要还原的客户端。停止代理后，可以取消勾选已部署的 Codex，单独还原其它客户端。
+2. 点击“还原配置”。原生接入文件和 `.julong/` 中由矩龙部署的文件按备份恢复；原本不存在的文件被移除。读取部署时记录的目录，尚未部署的新路径不会成为还原目标。
+3. 只有选中 Codex 时，才同时运行 Codex 原有配置、认证备份与部署资源还原流程。其它客户端手动配置的 API 地址和认证从未被矩龙接管，本操作不会重置这些文件。
+4. 未勾选客户端保持部署状态，其备份继续保存在清单中，稍后仍可单独还原。选中项被外部修改时会先报错并保留文件；未选中项的修改不会阻止其它客户端还原。存在未完成环境事务时先执行“恢复事务”。
+
+还原后界面刷新各客户端部署状态并列出本次处理结果。客户端选择尚在保存时禁止还原，后端也会检查选择是否变化，避免用旧勾选状态执行操作。供应商页的“还原干净环境”继续仅清理 Codex，不再顺带还原其它客户端。
+
+macOS：`julong-codex environment restore` 与桌面按钮共用同一流程，使用已保存的环境勾选项。Windows 目标机：使用 `julong-codex.exe environment restore`，语义相同。两个平台沿用现有构建脚本及资源清单；本次只运行构建前检查，不重新打包或替换已安装 App。更新构建后重启应用才能使用新行为。
+
+验证覆盖六客户端逐项还原、未选中项与备份字节保持、后续还原剩余项、重复还原、空选择、过期选择、外部修改、部署路径变化与未完成事务。记录见 `docs/verification-0.2.8.md`。

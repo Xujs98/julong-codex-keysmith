@@ -161,15 +161,40 @@ pub fn load() -> Result<Settings, String> {
     load_at(&state_home())
 }
 pub fn configured_codex_home() -> Option<PathBuf> {
-    if !state_home().join(SETTINGS).is_file() {
+    configured_codex_home_at(&state_home())
+}
+fn configured_codex_home_at(home: &Path) -> Option<PathBuf> {
+    if !home.join(SETTINGS).is_file() {
         return None;
     }
-    let s = load().ok()?;
+    let s = load_at(home).ok()?;
+    // Unchecking Codex selects the next operation; retain the old transport
+    // location while its config/backup is deployed. Native instruction files
+    // alone must not redirect a newly chosen Codex directory back to the old one.
+    if let Some(deployed) = manifest(home).ok().and_then(|m| m.settings) {
+        if let Some(e) = deployed
+            .environments
+            .iter()
+            .find(|e| e.id == "codex" && e.enabled)
+        {
+            let path = PathBuf::from(&e.path);
+            if path.join(crate::deploy::DEPLOYMENT_MANIFEST).exists()
+                || path.join("config.toml.super-instruct-bak").exists()
+            {
+                return Some(path);
+            }
+        }
+    }
     let e = s.environments.iter().find(|e| e.id == "codex")?;
-    if e.enabled && !e.path.is_empty() {
-        Some(PathBuf::from(&e.path))
+    let path = PathBuf::from(&e.path);
+    if !e.path.is_empty()
+        && (e.enabled
+            || path.join(crate::deploy::DEPLOYMENT_MANIFEST).exists()
+            || path.join("config.toml.super-instruct-bak").exists())
+    {
+        Some(path)
     } else {
-        Some(state_home().join("control"))
+        Some(home.join("control"))
     }
 }
 pub fn codex_enabled() -> bool {
@@ -264,22 +289,22 @@ pub fn save(settings: Settings) -> Result<Settings, String> {
     {
         return Err("请先停止代理，再修改 Codex 环境目录或启用状态".into());
     }
-    let codex_changed = before
+    let codex_path_changed = before
         .environments
         .iter()
         .find(|e| e.id == "codex")
-        .map(|e| (&e.path, e.enabled))
+        .map(|e| &e.path)
         != settings
             .environments
             .iter()
             .find(|e| e.id == "codex")
-            .map(|e| (&e.path, e.enabled));
-    if codex_changed
+            .map(|e| &e.path);
+    if codex_path_changed
         && crate::deploy::DeployManager::new()
             .map(|m| m.status().bridge_active)
             .unwrap_or(false)
     {
-        return Err("请先停止代理并还原已部署的 Codex 配置，再变更其目录或启用状态".into());
+        return Err("请先停止代理并还原已部署的 Codex 配置，再变更其目录".into());
     }
     let result = save_at(&home, settings)?;
     // A control directory is not a detected Codex installation. It holds shared provider/CLI state.
@@ -542,12 +567,69 @@ pub fn recover_at(home: &Path) -> Result<(), String> {
     }
     Ok(())
 }
-pub fn restore_at(home: &Path) -> Result<String, String> {
-    recover_at(home)?;
-    let old = manifest(home)?;
-    check_integrity(&old)?;
+fn checked_ids(ids: &[String]) -> Result<BTreeSet<&str>, String> {
+    if ids.is_empty() {
+        return Err("请先在客户端环境中勾选要还原的客户端".into());
+    }
+    let selected: BTreeSet<_> = ids.iter().map(String::as_str).collect();
+    if selected.len() != ids.len() || selected.iter().any(|id| !IDS.contains(id)) {
+        return Err("还原选择包含未知或重复的客户端".into());
+    }
+    Ok(selected)
+}
+
+pub fn selected_ids(settings: &Settings) -> Vec<String> {
+    settings
+        .environments
+        .iter()
+        .filter(|e| e.enabled)
+        .map(|e| e.id.clone())
+        .collect()
+}
+
+fn partition_restore(old: &Manifest, ids: &[String]) -> Result<(Manifest, Manifest), String> {
+    let selected = checked_ids(ids)?;
+    if !old.entries.is_empty() && old.settings.is_none() {
+        return Err("部署清单缺少客户端归属，无法按选择还原".into());
+    }
+    let mut restore = Manifest::default();
+    let mut keep = old.clone();
+    keep.entries.clear();
+    for entry in &old.entries {
+        let owners: Vec<_> = old
+            .settings
+            .iter()
+            .flat_map(|s| &s.environments)
+            .filter(|env| env.enabled && entry.path.starts_with(Path::new(&env.path)))
+            .collect();
+        if owners.len() != 1 {
+            return Err(format!(
+                "无法确认部署文件所属客户端: {}",
+                entry.path.display()
+            ));
+        }
+        if selected.contains(owners[0].id.as_str()) {
+            restore.entries.push(entry.clone());
+        } else {
+            keep.entries.push(entry.clone());
+        }
+    }
+    if let Some(settings) = &mut keep.settings {
+        for env in &mut settings.environments {
+            if selected.contains(env.id.as_str()) {
+                env.enabled = false;
+            }
+        }
+    }
+    Ok((restore, keep))
+}
+
+fn apply_restore(home: &Path, restore: Manifest, keep: Manifest) -> Result<(), String> {
+    // Only selected files participate. An edit in an unselected client must not
+    // prevent another client from being restored or overwrite its backup.
+    check_integrity(&restore)?;
     let mut snapshots = Vec::new();
-    for e in &old.entries {
+    for e in &restore.entries {
         snapshots.push(Snapshot {
             path: e.path.clone(),
             bytes: read(&e.path)?,
@@ -562,24 +644,100 @@ pub fn restore_at(home: &Path) -> Result<String, String> {
         &serde_json::to_vec(&snapshots).map_err(|e| e.to_string())?,
     )?;
     let result = (|| {
-        for e in old.entries {
+        for e in &restore.entries {
             restore_snapshot(&Snapshot {
-                path: e.path,
-                bytes: e.before,
+                path: e.path.clone(),
+                bytes: e.before.clone(),
             })?;
         }
-        restore_snapshot(&Snapshot {
-            path: home.join(MANIFEST),
-            bytes: None,
-        })?;
+        if keep.entries.is_empty() {
+            restore_snapshot(&Snapshot {
+                path: home.join(MANIFEST),
+                bytes: None,
+            })?;
+        } else {
+            atomic(
+                &home.join(MANIFEST),
+                &serde_json::to_vec_pretty(&keep).map_err(|e| e.to_string())?,
+            )?;
+        }
         fs::remove_file(home.join(JOURNAL)).map_err(|e| e.to_string())?;
-        Ok("所选环境部署已还原，原始文件字节已恢复".into())
+        Ok(())
     })();
     if result.is_err() {
         recover_at(home)?;
     }
     result
 }
+
+/// Full rollback is reserved for deployment failures and explicit internal cleanup.
+pub fn restore_at(home: &Path) -> Result<String, String> {
+    recover_at(home)?;
+    apply_restore(home, manifest(home)?, Manifest::default())?;
+    Ok("全部环境部署已还原，原始文件字节已恢复".into())
+}
+
+/// Resolve ownership from the deployed manifest, not newly edited directory fields.
+pub fn restore_selected_at(home: &Path, ids: &[String]) -> Result<String, String> {
+    checked_ids(ids)?;
+    if home.join(JOURNAL).exists() {
+        return Err("存在未完成事务，请先点击恢复事务，再还原所选客户端".into());
+    }
+    let (restore, keep) = partition_restore(&manifest(home)?, ids)?;
+    let count = restore.entries.len();
+    if count > 0 {
+        apply_restore(home, restore, keep)?;
+    }
+    let names = ids
+        .iter()
+        .filter_map(|id| metadata(id).map(|m| m.0))
+        .collect::<Vec<_>>()
+        .join("、");
+    Ok(if count == 0 {
+        format!("{names}：没有需要还原的环境部署文件")
+    } else {
+        format!("已还原 {names} 的 {count} 个部署文件；未选客户端保持原状")
+    })
+}
+
+/// Shared desktop / CLI operation, including Codex transport only when selected.
+pub fn restore_selected_configuration_at(home: &Path, ids: &[String]) -> Result<String, String> {
+    let selected = checked_ids(ids)?;
+    let old = manifest(home)?;
+    let settings = load_at(home)?;
+    if selected != selected_ids(&settings).iter().map(String::as_str).collect() {
+        return Err("客户端选择已变化，请刷新后重试还原".into());
+    }
+    let codex_home = if selected.contains("codex") {
+        old.settings
+            .as_ref()
+            .and_then(|s| s.environments.iter().find(|e| e.id == "codex" && e.enabled))
+            .or_else(|| settings.environments.iter().find(|e| e.id == "codex"))
+            .filter(|e| !e.path.is_empty())
+            .map(|e| PathBuf::from(&e.path))
+    } else {
+        None
+    };
+    // Catch selected-file conflicts before invoking either restore pipeline.
+    check_integrity(&partition_restore(&old, ids)?.0)?;
+    let message = restore_selected_at(home, ids)?;
+    if let Some(path) = codex_home {
+        let result = crate::deploy::DeployManager::at(path)
+            .restore()
+            .map_err(|e| format!("{message}；Codex 配置还原失败，可修复问题后重试：{e}"))?;
+        return Ok(format!("{message}；{result}"));
+    }
+    Ok(message)
+}
+
+pub fn restore_selected_configuration(ids: &[String]) -> Result<String, String> {
+    let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
+    if crate::runtime::port_is_listening() {
+        return Err("请先停止代理再还原所选客户端，避免运行时仍使用旧会话".into());
+    }
+    restore_selected_configuration_at(&state_home(), ids)
+}
+
 pub fn deploy() -> Result<String, String> {
     let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
     deploy_at(&state_home(), &load()?)
@@ -587,6 +745,10 @@ pub fn deploy() -> Result<String, String> {
 pub fn restore() -> Result<String, String> {
     let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
     restore_at(&state_home())
+}
+pub fn restore_codex_files() -> Result<String, String> {
+    let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
+    restore_selected_at(&state_home(), &["codex".into()])
 }
 pub fn deployed_settings() -> Result<Settings, String> {
     let m = manifest(&state_home())?;
@@ -614,4 +776,53 @@ pub fn transport_bridge(home: &Path) -> String {
         bootstrap(),
         profile
     )
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+
+    #[test]
+    fn unchecking_codex_keeps_its_transport_but_native_only_deploy_does_not_pin_a_moved_path() {
+        let root = std::env::temp_dir().join(format!("julong-selection-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("old")).unwrap();
+        fs::create_dir_all(root.join("new")).unwrap();
+        let old_path = fs::canonicalize(root.join("old")).unwrap();
+        let new_path = fs::canonicalize(root.join("new")).unwrap();
+        let home = root.join("state");
+        let mut settings = Settings {
+            schema_version: 1,
+            environments: IDS
+                .iter()
+                .map(|id| Environment {
+                    id: (*id).into(),
+                    enabled: *id == "codex",
+                    path: if *id == "codex" {
+                        old_path.to_string_lossy().into_owned()
+                    } else {
+                        String::new()
+                    },
+                })
+                .collect(),
+            profiles: vec!["astra-codex".into()],
+        };
+        deploy_at(&home, &settings).unwrap();
+        settings.environments[0].path = new_path.to_string_lossy().into_owned();
+        save_at(&home, settings.clone()).unwrap();
+        assert_eq!(configured_codex_home_at(&home), Some(new_path));
+        fs::write(
+            old_path.join("config.toml.super-instruct-bak"),
+            b"original config",
+        )
+        .unwrap();
+        settings.environments[0].enabled = false;
+        settings.environments[0].path = old_path.to_string_lossy().into_owned();
+        save_at(&home, settings).unwrap();
+        assert_eq!(configured_codex_home_at(&home), Some(old_path.clone()));
+        restore_selected_at(&home, &["codex".into()]).unwrap();
+        assert_eq!(configured_codex_home_at(&home), Some(old_path.clone()));
+        fs::remove_file(old_path.join("config.toml.super-instruct-bak")).unwrap();
+        assert_eq!(configured_codex_home_at(&home), Some(home.join("control")));
+        fs::remove_dir_all(root).unwrap();
+    }
 }

@@ -95,6 +95,10 @@ impl DeployManager {
         Self::find_codex_home().map(|codex_home| Self { codex_home })
     }
 
+    pub(crate) fn at(codex_home: PathBuf) -> Self {
+        Self { codex_home }
+    }
+
     pub fn codex_home(&self) -> &Path {
         &self.codex_home
     }

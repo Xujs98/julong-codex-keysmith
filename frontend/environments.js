@@ -18,7 +18,7 @@
         try {
             await invoke('set_environments', { settings });
             await refresh();
-            message('选择已保存。部署只应用所选环境及匹配指令；运行中的代理需重新启动。');
+            message('选择已保存。部署与还原均按当前勾选的客户端执行；还原前请先停止代理。');
         } finally { saving = false; }
     }
     function settingsCopy() { return structuredClone(snapshot.settings); }
@@ -105,7 +105,7 @@
                 const heading = node('div', undefined, 'environment-heading');
                 const toggle = node('button', env.enabled ? '✓' : '', 'environment-check'); toggle.type = 'button';
                 toggle.setAttribute('role', 'checkbox'); toggle.setAttribute('aria-checked', String(env.enabled));
-                toggle.setAttribute('aria-label', `部署 ${env.name}`);
+                toggle.setAttribute('aria-label', `选择 ${env.name} 进行部署或还原`);
                 toggle.addEventListener('click', async () => {
                     if (!env.path && !env.enabled) { manual(env.id, env.name); return; }
                     const settings = settingsCopy(); settings.environments.find(e => e.id === env.id).enabled = !env.enabled;
@@ -146,5 +146,12 @@
             }
         });
     });
-    window.JulongEnvironments = { refresh, toggleProfile };
+    function selectedIds() {
+        if (saving) throw new Error('正在保存客户端选择，请稍后重试');
+        if (!snapshot) throw new Error('客户端环境尚未加载，请刷新后重试');
+        const ids = snapshot.settings.environments.filter(env => env.enabled).map(env => env.id);
+        if (!ids.length) throw new Error('请先在客户端环境中勾选要还原的客户端');
+        return ids;
+    }
+    window.JulongEnvironments = { refresh, toggleProfile, selectedIds };
 })();

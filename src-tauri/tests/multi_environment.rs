@@ -407,3 +407,197 @@ async fn codex_native_headers_activate_and_keep_threads_isolated() {
     task.abort();
     up.abort();
 }
+
+fn tree_bytes(root: &std::path::Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    fn visit(
+        root: &std::path::Path,
+        dir: &std::path::Path,
+        files: &mut BTreeMap<PathBuf, Vec<u8>>,
+    ) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                visit(root, &path, files);
+            } else {
+                files.insert(
+                    path.strip_prefix(root).unwrap().to_path_buf(),
+                    fs::read(path).unwrap(),
+                );
+            }
+        }
+    }
+    let mut files = BTreeMap::new();
+    visit(root, root, &mut files);
+    files
+}
+fn select_only(settings: &mut Settings, ids: &[&str]) {
+    for env in &mut settings.environments {
+        env.enabled = ids.contains(&env.id.as_str());
+    }
+}
+
+#[test]
+fn restore_each_selected_client_preserves_other_clients_and_their_backups() {
+    for selected in environments::IDS {
+        let f = Fixture::new();
+        let home = f.0.join("state");
+        let mut s = settings(&f);
+        for env in &s.environments {
+            let root = PathBuf::from(&env.path);
+            fs::write(
+                root.join(environments::metadata(&env.id).unwrap().3),
+                format!("Original {}\r\n", env.id),
+            )
+            .unwrap();
+            fs::create_dir_all(root.join(".julong/packs")).unwrap();
+            fs::write(root.join(".julong/connection.json"), b"user connection").unwrap();
+            fs::write(
+                root.join(format!(".julong/packs/astra-{}.md", env.id)),
+                b"user pack",
+            )
+            .unwrap();
+        }
+        let codex = f.0.join("codex");
+        fs::write(codex.join("config.toml"), b"original config").unwrap();
+        fs::write(codex.join("auth.json"), b"original auth").unwrap();
+        let original: BTreeMap<_, _> = environments::IDS
+            .iter()
+            .map(|id| (*id, tree_bytes(&f.0.join(id))))
+            .collect();
+        environments::deploy_at(&home, &s).unwrap();
+        fs::write(
+            codex.join("config.toml.super-instruct-bak"),
+            b"original config",
+        )
+        .unwrap();
+        fs::write(
+            codex.join("auth.json.julong-providers-bak"),
+            b"original auth",
+        )
+        .unwrap();
+        fs::write(codex.join("config.toml"), b"proxy config").unwrap();
+        fs::write(codex.join("auth.json"), b"proxy auth").unwrap();
+        fs::write(codex.join("bridge.md"), b"bootstrap").unwrap();
+        let deployed: BTreeMap<_, _> = environments::IDS
+            .iter()
+            .map(|id| (*id, tree_bytes(&f.0.join(id))))
+            .collect();
+        select_only(&mut s, &[selected]);
+        // Restoration does not require selecting model instructions again.
+        s.profiles.clear();
+        environments::save_at(&home, s.clone()).unwrap();
+        let ids = environments::selected_ids(&s);
+        environments::restore_selected_configuration_at(&home, &ids).unwrap();
+        for id in environments::IDS {
+            assert_eq!(
+                tree_bytes(&f.0.join(id)),
+                if id == selected {
+                    original[id].clone()
+                } else {
+                    deployed[id].clone()
+                },
+                "selected={selected}, inspected={id}"
+            );
+        }
+        let manifest_before_repeat = fs::read(home.join("environment-deployment.json")).unwrap();
+        let manifest: Value = serde_json::from_slice(&manifest_before_repeat).unwrap();
+        assert_eq!(
+            manifest["settings"]["environments"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|e| e["enabled"] == true)
+                .count(),
+            5
+        );
+        environments::restore_selected_configuration_at(&home, &ids).unwrap();
+        assert_eq!(
+            fs::read(home.join("environment-deployment.json")).unwrap(),
+            manifest_before_repeat
+        );
+        // Backups left by the partial restore can still restore every other client.
+        select_only(&mut s, &environments::IDS);
+        environments::save_at(&home, s.clone()).unwrap();
+        environments::restore_selected_configuration_at(&home, &environments::selected_ids(&s))
+            .unwrap();
+        for id in environments::IDS {
+            assert_eq!(tree_bytes(&f.0.join(id)), original[id]);
+        }
+        assert!(!home.join("environment-deployment.json").exists());
+    }
+}
+
+#[test]
+fn selected_restore_rejects_empty_invalid_stale_and_conflicting_selection_without_writes() {
+    let f = Fixture::new();
+    let home = f.0.join("state");
+    let mut s = settings(&f);
+    environments::deploy_at(&home, &s).unwrap();
+    environments::save_at(&home, s.clone()).unwrap();
+    let before = tree_bytes(&f.0);
+    for ids in [
+        vec![],
+        vec!["unknown".into()],
+        vec!["claude".into(), "claude".into()],
+        vec!["claude".into()],
+    ] {
+        assert!(environments::restore_selected_configuration_at(&home, &ids).is_err());
+        assert_eq!(tree_bytes(&f.0), before);
+    }
+    select_only(&mut s, &["claude", "grok"]);
+    environments::save_at(&home, s.clone()).unwrap();
+    fs::write(f.0.join("grok/AGENTS.md"), b"user edit").unwrap();
+    let before = tree_bytes(&f.0);
+    assert!(environments::restore_selected_configuration_at(
+        &home,
+        &environments::selected_ids(&s)
+    )
+    .is_err());
+    assert_eq!(
+        tree_bytes(&f.0),
+        before,
+        "a selected conflict must stop all selected restores"
+    );
+    select_only(&mut s, &["claude"]);
+    environments::save_at(&home, s.clone()).unwrap();
+    let untouched = tree_bytes(&f.0.join("grok"));
+    environments::restore_selected_configuration_at(&home, &environments::selected_ids(&s))
+        .unwrap();
+    assert_eq!(
+        tree_bytes(&f.0.join("grok")),
+        untouched,
+        "unselected edits are preserved and do not block restore"
+    );
+    assert!(!f.0.join("claude/CLAUDE.md").exists());
+}
+
+#[test]
+fn selected_restore_uses_deployed_paths_and_does_not_recover_unrelated_transactions() {
+    let f = Fixture::new();
+    let home = f.0.join("state");
+    let mut s = settings(&f);
+    environments::deploy_at(&home, &s).unwrap();
+    let moved = f.0.join("new claude directory");
+    fs::create_dir(&moved).unwrap();
+    fs::write(moved.join("CLAUDE.md"), b"new user directory").unwrap();
+    select_only(&mut s, &["claude"]);
+    s.environments
+        .iter_mut()
+        .find(|e| e.id == "claude")
+        .unwrap()
+        .path = moved.to_string_lossy().into();
+    environments::save_at(&home, s.clone()).unwrap();
+    let ids = environments::selected_ids(&s);
+    let journal = home.join("environment-transaction.json");
+    fs::write(&journal, b"[]").unwrap();
+    let before = tree_bytes(&f.0);
+    assert!(environments::restore_selected_configuration_at(&home, &ids).is_err());
+    assert_eq!(tree_bytes(&f.0), before);
+    fs::remove_file(journal).unwrap();
+    environments::restore_selected_configuration_at(&home, &ids).unwrap();
+    assert!(!f.0.join("claude/CLAUDE.md").exists());
+    assert_eq!(
+        fs::read(moved.join("CLAUDE.md")).unwrap(),
+        b"new user directory"
+    );
+}
