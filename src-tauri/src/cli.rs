@@ -802,6 +802,12 @@ async fn run_headless_proxy() -> Result<(), String> {
     let core = Arc::new(
         MitmCore::builder()
             .target(relay)
+            .anthropic_api_key(
+                providers::load_or_migrate(manager.codex_home())?
+                    .into_iter()
+                    .find(|p| providers::valid_relay_url(&p.normalized_url()))
+                    .map(|p| p.api_key),
+            )
             .activation_gate(activation::ActivationGate::deployed()?)
             .response_parser(UniversalSseParser)
             .response_interceptor(TamperEngine::default_rules())

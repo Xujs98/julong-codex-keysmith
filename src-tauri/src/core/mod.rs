@@ -20,11 +20,16 @@ use tokio::sync::RwLock;
 
 pub struct MitmCore {
     activation: Option<std::sync::Mutex<crate::activation::ActivationGate>>,
-    target: Arc<RwLock<String>>,
+    target: Arc<RwLock<UpstreamTarget>>,
     client: Client,
     request_interceptors: Vec<Box<dyn RequestInterceptor>>,
     response_parser: Box<dyn ResponseParser>,
     response_interceptors: Vec<Box<dyn ResponseInterceptor>>,
+}
+
+struct UpstreamTarget {
+    url: String,
+    anthropic_api_key: Option<String>,
 }
 
 /// 阶段 1 产物: 请求拦截后的元数据 + 上游响应
@@ -56,7 +61,14 @@ impl MitmCore {
     }
 
     pub async fn set_target(&self, target: impl Into<String>) {
-        *self.target.write().await = target.into();
+        self.target.write().await.url = target.into();
+    }
+
+    pub async fn set_provider(&self, target: impl Into<String>, api_key: &str) {
+        *self.target.write().await = UpstreamTarget {
+            url: target.into(),
+            anthropic_api_key: Some(api_key.into()),
+        };
     }
 
     /// 阶段 1: 请求拦截 → 转发上游 → 返回流式响应
@@ -108,8 +120,10 @@ impl MitmCore {
         }
 
         // 3. 转发到上游 — 跳过 hop-by-hop 头
-        let target = self.target.read().await.clone();
-        let url = upstream_url(&target, &path_and_query);
+        let target = self.target.read().await;
+        let url = upstream_url(&target.url, &path_and_query);
+        let anthropic_key = target.anthropic_api_key.clone();
+        drop(target);
         tracing::debug!(url = %url, "forwarding to upstream");
 
         let mut forward_headers = HeaderMap::new();
@@ -126,6 +140,30 @@ impl MitmCore {
                 continue;
             }
             forward_headers.insert(name.clone(), value.clone());
+        }
+
+        if crate::claude::messages_path(&path_and_query) {
+            if let Some(key) = anthropic_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                // Anthropic uses x-api-key; compatible relays may use Bearer.
+                // Replace both, never forward a stale client key to a new provider.
+                forward_headers.insert("x-api-key", http::HeaderValue::from_str(key)?);
+                forward_headers.insert(
+                    "authorization",
+                    http::HeaderValue::from_str(&format!("Bearer {key}"))?,
+                );
+            } else if forward_headers
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                == Some(&format!("Bearer {}", crate::claude::LOCAL_TOKEN))
+            {
+                return Err(
+                    "Claude Code 接入缺少供应商 API Key，请在供应商页面配置后重启代理".into(),
+                );
+            }
         }
 
         let resp = self
@@ -215,6 +253,7 @@ impl MitmCore {
 pub struct MitmCoreBuilder {
     activation: Option<crate::activation::ActivationGate>,
     target: Option<String>,
+    anthropic_api_key: Option<String>,
     client: Option<Client>,
     request_interceptors: Vec<Box<dyn RequestInterceptor>>,
     response_parser: Option<Box<dyn ResponseParser>>,
@@ -226,6 +265,7 @@ impl MitmCoreBuilder {
         Self {
             activation: None,
             target: None,
+            anthropic_api_key: None,
             client: None,
             request_interceptors: Vec::new(),
             response_parser: None,
@@ -240,6 +280,11 @@ impl MitmCoreBuilder {
 
     pub fn target(mut self, target: impl Into<String>) -> Self {
         self.target = Some(target.into());
+        self
+    }
+
+    pub fn anthropic_api_key(mut self, api_key: Option<String>) -> Self {
+        self.anthropic_api_key = api_key;
         self
     }
 
@@ -266,7 +311,10 @@ impl MitmCoreBuilder {
     pub fn build(self) -> Result<MitmCore, String> {
         Ok(MitmCore {
             activation: self.activation.map(std::sync::Mutex::new),
-            target: Arc::new(RwLock::new(self.target.ok_or("target not set")?)),
+            target: Arc::new(RwLock::new(UpstreamTarget {
+                url: self.target.ok_or("target not set")?,
+                anthropic_api_key: self.anthropic_api_key,
+            })),
             client: self.client.unwrap_or_else(|| {
                 Client::builder()
                     .timeout(std::time::Duration::from_secs(300))

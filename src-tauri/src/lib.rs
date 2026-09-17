@@ -1,4 +1,5 @@
 pub mod activation;
+pub mod claude;
 pub mod environments;
 pub mod upstream;
 // Super-Instruct — Tauri 桌面应用入口
@@ -428,6 +429,13 @@ async fn start_proxy(
     // 6. 构建 MitmCore
     let core = match MitmCore::builder()
         .target(&relay_url)
+        .anthropic_api_key(
+            provider_runtime
+                .providers
+                .iter()
+                .find(|p| providers::valid_relay_url(&p.normalized_url()))
+                .map(|p| p.api_key.clone()),
+        )
         .activation_gate(activation::ActivationGate::deployed()?)
         .response_parser(UniversalSseParser)
         .response_interceptor(tamper)
@@ -1072,7 +1080,8 @@ async fn delete_provider(
     if let Some(provider) = next_provider {
         providers::activate(&provider, true)?;
         if let Some(core) = state.core.read().await.as_ref() {
-            core.set_target(provider.normalized_url()).await;
+            core.set_provider(provider.normalized_url(), &provider.api_key)
+                .await;
         }
     }
 
@@ -1102,7 +1111,8 @@ async fn use_provider(
             rt.clear_model_fallbacks();
         }
         if let Some(core) = state.core.read().await.as_ref() {
-            core.set_target(provider.normalized_url()).await;
+            core.set_provider(provider.normalized_url(), &provider.api_key)
+                .await;
         }
     }
     Ok(ordered)
@@ -1404,7 +1414,7 @@ async fn switch_provider(
     };
     if let Some(provider) = next {
         let url = provider.normalized_url();
-        core.set_target(url.clone()).await;
+        core.set_provider(url.clone(), &provider.api_key).await;
         let _ = providers::activate(&provider, true);
         let _ = app.emit(
             "provider-switched",

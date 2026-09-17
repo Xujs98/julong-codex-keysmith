@@ -371,7 +371,25 @@ fn atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path.parent().ok_or("路径缺少父目录")?;
     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     let tmp = parent.join(format!(".julong-{}.tmp", uuid::Uuid::new_v4()));
-    fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
+    // settings.json snapshots can contain credentials. Create the temporary
+    // file privately too, not only the eventual manifest/settings destination.
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let write = (|| {
+        use std::io::Write;
+        let mut file = options.open(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()
+    })();
+    if let Err(error) = write {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("写入 {}: {error}", path.display()));
+    }
     let result = fs::rename(&tmp, path).or_else(|e| {
         if cfg!(windows) && path.is_file() {
             fs::copy(&tmp, path)
@@ -441,13 +459,26 @@ fn desired(settings: &Settings, old: &Manifest) -> Result<BTreeMap<PathBuf, Vec<
             .as_bytes(),
         );
         writes.insert(target, content);
+        if env.id == "claude" {
+            let target = safe_target(&root, "settings.json")?;
+            let original = old
+                .entries
+                .iter()
+                .find(|e| e.path == target)
+                .map(|e| Ok(e.before.clone()))
+                .unwrap_or_else(|| read(&target))?;
+            writes.insert(
+                target,
+                crate::claude::render_settings(original.as_deref(), "http://127.0.0.1:8080")?,
+            );
+        }
         let id = selected_pack(settings, &env.id).ok_or("缺少模型指令")?;
         // Inert archive: native clients only load the bootstrap above; gate injects the selected pack.
         writes.insert(
             safe_target(&root, &format!(".julong/packs/{id}.md"))?,
             packs[&env.id].as_bytes().to_vec(),
         );
-        let connection = serde_json::json!({"environment":env.id,"profile":id,"base_url":"http://127.0.0.1:8080","activation_word":"矩龙","activation_reply":crate::activation::REPLY,"session_header":"x-julong-session","environment_header":"x-julong-environment","status":"instruction-files-installed; gateway-connection-required"});
+        let connection = serde_json::json!({"environment":env.id,"profile":id,"base_url":"http://127.0.0.1:8080","activation_word":"矩龙","activation_reply":crate::activation::REPLY,"session_header":"x-julong-session","environment_header":"x-julong-environment","status":if env.id == "claude" {"settings-configured; proxy-start-required"} else {"instruction-files-installed; gateway-connection-required"}});
         writes.insert(
             safe_target(&root, ".julong/connection.json")?,
             serde_json::to_vec_pretty(&connection).map_err(|e| e.to_string())?,
@@ -490,7 +521,7 @@ pub fn preview_at(home: &Path, settings: &Settings) -> Result<Preview, String> {
             .filter(|e| !writes.contains_key(&e.path))
             .map(|e| format!("恢复未选中项 {}", e.path.display())),
     );
-    Ok(Preview { state: if old.entries.is_empty(){"ready"}else{"deployed"}.into(),actions,warnings:vec!["文件安装不等于客户端接入。Codex 使用现有代理部署；其它客户端需将 API 地址接入本机网关。可在“会话验收”中直接验证程序开关。".into()],selected_skills:0,instruction_profile_name:settings.profiles.join("、"),environments:settings.environments.iter().filter(|e|e.enabled).map(|e|e.id.clone()).collect() })
+    Ok(Preview { state: if old.entries.is_empty(){"ready"}else{"deployed"}.into(),actions,warnings:vec!["Codex 和 Claude Code 会自动配置本机网关；Claude 的 settings.json 会备份并合并，保留模型、权限和其它设置。请使用支持 Anthropic Messages 的供应商并在部署后启动代理、重启 Claude。其它客户端需自行设置 API 地址。部署不会安装或卸载客户端命令。".into()],selected_skills:0,instruction_profile_name:settings.profiles.join("、"),environments:settings.environments.iter().filter(|e|e.enabled).map(|e|e.id.clone()).collect() })
 }
 pub fn deploy_at(home: &Path, settings: &Settings) -> Result<String, String> {
     fs::create_dir_all(home).map_err(|e| e.to_string())?;

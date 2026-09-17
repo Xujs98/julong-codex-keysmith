@@ -523,12 +523,12 @@ MIT — 见 [LICENSE](LICENSE)
 1. 勾选环境、设置目录，并勾选对应模型指令。若没有选择该模型专用包，使用所选通用边界；两者都没有则部署被阻止。
 2. 点击“部署所选环境”，检查预览中的绝对文件路径后确认。仅选中项会写入；取消选择或迁移目录后再次部署，会恢复旧目标的原始文件。
 3. 启动或重启代理，然后在所选环境的“会话验收”对话框中**单独发送 `矩龙`**。本机程序准确返回 **`把每一次交互，变成可控能力`** 才表示当前验收会话已启用。
-4. 客户端真实对话须接入 `http://127.0.0.1:8080`。Codex 沿用现有代理部署；其它客户端需按其 API 配置设置代理地址，保留原有认证。程序支持 Responses、OpenAI Chat Completions、Anthropic Messages 与 Gemini generateContent/streamGenerateContent 消息格式；中转站也必须支持所用协议。
+4. 客户端真实对话须接入 `http://127.0.0.1:8080`。Codex 沿用现有代理部署；Claude Code 从 v0.2.9 起自动合并 settings.json 并接入网关；其余客户端需按其 API 配置设置代理地址，保留原有认证。程序支持 Responses、OpenAI Chat Completions、Anthropic Messages 与 Gemini generateContent/streamGenerateContent 消息格式；中转站也必须支持所用协议。
 
 | 环境 | 默认配置目录 | 自动识别环境变量 | 原生接入说明文件 |
 | --- | --- | --- | --- |
 | Codex / GPT-6 Astra | `~/.codex` | `CODEX_HOME`、`CODEX_DIR` | `AGENTS.md`（现有部署另维护 `bridge.md`） |
-| Claude Code | `~/.claude` | `CLAUDE_CONFIG_DIR`、`CLAUDE_HOME` | `CLAUDE.md` |
+| Claude Code | `~/.claude` | `CLAUDE_CONFIG_DIR`、`CLAUDE_HOME` | `CLAUDE.md`、`settings.json`（v0.2.9 起） |
 | Grok 4.6 | `~/.grok` | `GROK_HOME`、`GROK_DIR` | `AGENTS.md` |
 | DeepSeek v4.1 | `~/.deepseek`、`~/.hermes` | `DEEPSEEK_HOME`、`DEEPSEEK_DIR`、`HERMES_HOME` | `DEEPSEEK.md` |
 | GLM 5.3 | `~/.glm`、`~/.zcode` | `GLM_HOME`、`ZCODE_HOME`、`ZHIPU_HOME` | `GLM.md` |
@@ -589,7 +589,7 @@ Windows 目标机：将 `JULONG_CODEX_TEST_BIN` 环境变量设为已安装的�
 
 1. 先停止代理，再勾选要还原的客户端。停止代理后，可以取消勾选已部署的 Codex，单独还原其它客户端。
 2. 点击“还原配置”。原生接入文件和 `.julong/` 中由矩龙部署的文件按备份恢复；原本不存在的文件被移除。读取部署时记录的目录，尚未部署的新路径不会成为还原目标。
-3. 只有选中 Codex 时，才同时运行 Codex 原有配置、认证备份与部署资源还原流程。其它客户端手动配置的 API 地址和认证从未被矩龙接管，本操作不会重置这些文件。
+3. 只有选中 Codex 时，才同时运行 Codex 原有配置、认证备份与部署资源还原流程。v0.2.9 起，选中 Claude Code 时还会还原矩龙备份的 `settings.json`；其它客户端未接管的 API 地址和认证不被重置。
 4. 未勾选客户端保持部署状态，其备份继续保存在清单中，稍后仍可单独还原。选中项被外部修改时会先报错并保留文件；未选中项的修改不会阻止其它客户端还原。存在未完成环境事务时先执行“恢复事务”。
 
 还原后界面刷新各客户端部署状态并列出本次处理结果。客户端选择尚在保存时禁止还原，后端也会检查选择是否变化，避免用旧勾选状态执行操作。供应商页的“还原干净环境”继续仅清理 Codex，不再顺带还原其它客户端。
@@ -597,3 +597,54 @@ Windows 目标机：将 `JULONG_CODEX_TEST_BIN` 环境变量设为已安装的�
 macOS：`julong-codex environment restore` 与桌面按钮共用同一流程，使用已保存的环境勾选项。Windows 目标机：使用 `julong-codex.exe environment restore`，语义相同。两个平台沿用现有构建脚本及资源清单；本次只运行构建前检查，不重新打包或替换已安装 App。更新构建后重启应用才能使用新行为。
 
 验证覆盖六客户端逐项还原、未选中项与备份字节保持、后续还原剩余项、重复还原、空选择、过期选择、外部修改、部署路径变化与未完成事务。记录见 `docs/verification-0.2.8.md`。
+
+
+### v0.2.9：Claude Code 配置与原生命令验收
+
+修复此前 Claude 部署仅写入 `CLAUDE.md`、不写 `settings.json` 的遗漏。桌面“部署所选环境”、启动代理和 CLI `environment deploy` 使用同一套 Rust 实现，适用于 macOS Intel、Apple Silicon 和 Windows。
+
+- 选中 Claude Code 后，备份所选配置目录的 `settings.json` 原始字节，合并 `env.ANTHROPIC_BASE_URL=http://127.0.0.1:8080` 和 `ANTHROPIC_CUSTOM_HEADERS` 中的客户端标识。原有模型映射、认证、权限、hooks 和无关字段保持不变；不会用 Codex 的 GPT 默认模型覆盖 Claude 模型。
+- 没有原有认证时写入本地占位令牌，真正的 API Key 由代理使用当前供应商的 Key 替换。Messages 和 count_tokens 请求随供应商切换更新认证，已运行的 Claude 不会将旧 Key 发给新供应商；没有可用 Key 时明确报错。配置目录和部署备份可能含凭据，macOS 新写入文件使用仅当前用户可读写权限，Windows 使用用户目录 ACL。
+- “还原配置”选中 Claude 时恢复原始 settings 字节；原先不存在则删除。未选中的客户端保持不变。重复部署不会覆盖最初备份，JSON 损坏、符号链接和部署后的外部修改会拒绝覆盖；遇到外部修改请先保留自己的修改再处理冲突。
+- Claude Code 原生 `x-claude-code-session-id` 可识别；客户端在用户文本前添加的独立 `<system-reminder>` 块不会再遮住单独的 `矩龙`。内联引用、附件、工具块、历史口令仍不作为启用请求。续聊保持会话，新对话需要重新启用。
+- 路径标签改为“配置目录”：它不是 Claude 可执行文件的安装目录。部署只管理配置与说明，不安装、删除或替换 `claude` 命令。配置写入后需启动代理并重新打开 Claude；项目级 settings、显式 `--settings`、shell 环境或云平台模式可能覆盖用户级配置，应移除冲突配置。中转站必须支持 Anthropic Messages 及所选 Claude 模型，本项目不把 OpenAI 协议自动转换为 Anthropic。
+
+macOS（Intel / M 芯片）使用步骤：
+
+1. 按现有 `build-macos.sh` 流程更新 App（Intel / Apple / Universal），或更新 CLI；此开发修复不会自动替换正在运行的旧 App。
+2. 在客户端环境勾选 Claude Code，选择实际的 `~/.claude` 或自定义 `CLAUDE_CONFIG_DIR`。自定义目录时，启动 Claude 的终端也必须使用相同的 `CLAUDE_CONFIG_DIR`。
+3. 勾选 Claude 模型指令，确认供应商支持 Claude 并填入有效 Key，部署后启动代理，重新运行 `claude`。
+4. 在真实 Claude 会话单独发送 `矩龙`，应看到本地回执“把每一次交互，变成可控能力”。继续发送普通消息时才会访问供应商。
+
+截图中的 `claude native binary not installed` 是 npm 安装缺少原生可选依赖或未执行 postinstall，和 settings 写入是两个独立问题。本次在当前 Intel Mac 的登录 zsh 中已验证 `claude --version` 正常。若另一台机器出现同一错误，使用安装 Claude 的同一套 Node/npm 执行：
+
+```bash
+# macOS Intel / Apple Silicon
+command -v node
+command -v npm
+command -v claude
+node -p 'process.platform + " " + process.arch'
+npm install -g @anthropic-ai/claude-code --include=optional --ignore-scripts=false
+claude --version
+```
+
+M 芯片应使用原生 arm64 Node；若通过 Rosetta 运行 x64 Node，先切换到 arm64 Node 再重装，避免仅下载 x64 可选依赖。使用 nvm 的终端需加载自己的 nvm 初始化配置；不要将另一台机器的绝对路径加入 PATH。
+
+```powershell
+# Windows 目标机（PowerShell）；官方包按当前 Node 平台下载原生依赖
+Get-Command node,npm,claude -ErrorAction SilentlyContinue
+node -p 'process.platform + " " + process.arch'
+npm.cmd install -g @anthropic-ai/claude-code --include=optional --ignore-scripts=false
+claude --version
+```
+
+Windows App 仍使用 `build-windows.ps1` / `build-windows.cmd` 生成完整 NSIS 安装程序。macOS 上的 `build-windows.sh` 只做其声明的交叉编译，不能替代 Windows 运行与安装验收。本次没有变更构建脚本或安装资源清单，新增适配代码编译进共享 Rust 核心。
+
+附加的真实 Claude CLI 验收只访问本机随机端口、使用临时配置目录和假 Key，不访问付费模型：
+
+```bash
+# macOS；指向真实原生 claude 可执行文件
+JULONG_CLAUDE_TEST_BIN="$(command -v claude)" cargo test --manifest-path src-tauri/Cargo.toml --test claude_client -- --include-ignored --nocapture
+```
+
+Windows 目标机将 `JULONG_CLAUDE_TEST_BIN` 设为原生 `claude.exe` 完整路径（不是 `.cmd` 包装脚本），再运行相同 Cargo 测试。常规 `cargo test` 默认忽略依赖已安装客户端的附加验收。版本验证记录见 `docs/verification-0.2.9.md`。

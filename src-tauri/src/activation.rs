@@ -73,6 +73,7 @@ impl ActivationGate {
             "session_id",
             "x-session-id",
             "x-codex-session-id",
+            "x-claude-code-session-id",
         ]
         .iter()
         .find_map(|key| headers.get(*key).and_then(|h| h.to_str().ok()))
@@ -100,7 +101,11 @@ impl ActivationGate {
         body: &Value,
         path: &str,
     ) -> Option<axum::response::Response> {
-        if path == "/julong/activation" && latest_text(body).as_deref().map(str::trim) != Some(WORD)
+        if path == "/julong/activation"
+            && activation_text(headers, body, path)
+                .as_deref()
+                .map(str::trim)
+                != Some(WORD)
         {
             self.prune();
             let active = self
@@ -118,7 +123,10 @@ impl ActivationGate {
             ));
         }
         if !(supported_path(path) || path == "/julong/activation")
-            || latest_text(body).as_deref().map(str::trim) != Some(WORD)
+            || activation_text(headers, body, path)
+                .as_deref()
+                .map(str::trim)
+                != Some(WORD)
         {
             return None;
         }
@@ -219,6 +227,35 @@ pub fn latest_text(body: &Value) -> Option<String> {
         return None;
     }
     text_parts(last.get("content").or_else(|| last.get("parts"))?)
+}
+
+fn activation_text(headers: &HeaderMap, body: &Value, path: &str) -> Option<String> {
+    // Claude Code 2.1 adds separate environment/date reminders ahead of the
+    // actual user block, even for a one-word prompt. Do not strip inline tags,
+    // attachments, tool blocks or reminders from arbitrary client protocols.
+    if path.split('?').next()?.ends_with("/messages")
+        && headers.contains_key("x-claude-code-session-id")
+    {
+        let last = body.get("messages")?.as_array()?.last()?;
+        if last.get("role")?.as_str()? != "user" {
+            return None;
+        }
+        if let Some(parts) = last.get("content")?.as_array() {
+            if parts.len() > 1
+                && parts[..parts.len() - 1].iter().all(|part| {
+                    text_parts(&json!([part])).is_some_and(|text| {
+                        let text = text.trim();
+                        text.starts_with("<system-reminder>")
+                            && text.ends_with("</system-reminder>")
+                            && text.matches("</system-reminder>").count() == 1
+                    })
+                })
+            {
+                return text_parts(&json!([parts.last()?]));
+            }
+        }
+    }
+    latest_text(body)
 }
 fn wire_reply(path: &str, body: &Value, text: &str) -> axum::response::Response {
     let model = body
@@ -330,6 +367,46 @@ fn wire_reply(path: &str, body: &Value, text: &str) -> axum::response::Response 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn claude_native_reminders_do_not_hide_exact_current_user_word() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-claude-code-session-id",
+            "native-session".parse().unwrap(),
+        );
+        let reminder =
+            json!({"type":"text","text":"<system-reminder>\nEnvironment\n</system-reminder>"});
+        let word = json!({"type":"text","text":"矩龙","cache_control":{"type":"ephemeral"}});
+        let mut body = json!({"model":"claude-sonnet-4-6","messages":[{"role":"user","content":[reminder,word]}]});
+        assert_eq!(
+            activation_text(&headers, &body, "/v1/messages?beta=true").as_deref(),
+            Some(WORD)
+        );
+        assert_ne!(
+            activation_text(&HeaderMap::new(), &body, "/v1/messages").as_deref(),
+            Some(WORD)
+        );
+        let mut gate = ActivationGate::new(BTreeMap::from([("claude".into(), "PACK".into())]));
+        assert!(gate
+            .local_response(&headers, &body, "/v1/messages")
+            .is_some());
+        body["messages"][0]["content"] = json!([{"type":"text","text":"next turn"}]);
+        assert!(gate.inject(&headers, &mut body, "/v1/messages"));
+        headers.insert("x-claude-code-session-id", "other-session".parse().unwrap());
+        assert!(!gate.inject(&headers, &mut body, "/v1/messages"));
+        for content in [
+            json!([{"type":"text","text":"<system-reminder>quoted</system-reminder>矩龙"}]),
+            json!([{"type":"text","text":"Quoted document"},word]),
+            json!([{"type":"image","source":{}},word]),
+            json!([{"type":"tool_result","content":"矩龙"},word]),
+            json!([reminder,{"type":"text","text":"Example: 矩龙"}]),
+        ] {
+            body["messages"][0]["content"] = content;
+            assert!(gate
+                .local_response(&headers, &body, "/v1/messages")
+                .is_none());
+        }
+    }
     #[test]
     fn expiration_capacity_reset_and_credentials_are_isolated() {
         let mut gate = ActivationGate::new(BTreeMap::from([("codex".into(), "pack".into())]));
