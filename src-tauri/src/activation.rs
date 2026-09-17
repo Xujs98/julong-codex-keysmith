@@ -66,6 +66,10 @@ impl ActivationGate {
             });
         let session = [
             "x-julong-session",
+            // Native Codex uses hyphenated names. Prefer the conversation ID:
+            // session-id can represent cache affinity shared by several threads.
+            "thread-id",
+            "session-id",
             "session_id",
             "x-session-id",
             "x-codex-session-id",

@@ -215,7 +215,17 @@ fn read_model(home: &Path) -> Option<String> {
 }
 
 pub fn activate(provider: &Provider, proxy_active: bool) -> Result<String, String> {
-    let home = DeployManager::find_codex_home().ok_or("Codex home not found")?;
+    let manager = DeployManager::new().ok_or("Codex home not found")?;
+    let value = activate_at(manager.codex_home(), provider, proxy_active)?;
+    if let Err(error) = manager.refresh_config_integrity() {
+        tracing::warn!("refresh provider config integrity failed: {}", error);
+    }
+    Ok(value)
+}
+
+// Explicit paths keep tests and all transaction writes in the same directory,
+// independent of environment selections saved by a running desktop application.
+fn activate_at(home: &Path, provider: &Provider, proxy_active: bool) -> Result<String, String> {
     let url = provider.normalized_url();
     let transaction = FileTransaction::begin(
         &home,
@@ -277,11 +287,6 @@ pub fn activate(provider: &Provider, proxy_active: bool) -> Result<String, Strin
     match result {
         Ok(value) => {
             transaction.commit()?;
-            if let Some(manager) = DeployManager::new() {
-                if let Err(error) = manager.refresh_config_integrity() {
-                    tracing::warn!("refresh provider config integrity failed: {}", error);
-                }
-            }
             Ok(value)
         }
         Err(error) => match transaction.rollback() {
@@ -478,7 +483,19 @@ pub fn save(provider: Provider) -> Result<Vec<Provider>, String> {
 /// 持久化代理运行期间确认可用的模型，只更新供应商存储与 config.toml。
 /// auth.json 不属于模型选择，保持字节级不变。
 pub fn persist_default_model(provider_id: &str, model: &str) -> Result<Provider, String> {
-    let home = DeployManager::find_codex_home().ok_or("Codex home not found")?;
+    let manager = DeployManager::new().ok_or("Codex home not found")?;
+    let updated = persist_default_model_at(manager.codex_home(), provider_id, model)?;
+    if let Err(error) = manager.refresh_config_integrity() {
+        tracing::warn!("refresh model fallback integrity failed: {error}");
+    }
+    Ok(updated)
+}
+
+fn persist_default_model_at(
+    home: &Path,
+    provider_id: &str,
+    model: &str,
+) -> Result<Provider, String> {
     let transaction = FileTransaction::begin(
         &home,
         "provider-model-fallback",
@@ -511,11 +528,6 @@ pub fn persist_default_model(provider_id: &str, model: &str) -> Result<Provider,
     match result {
         Ok(updated) => {
             transaction.commit()?;
-            if let Some(manager) = DeployManager::new() {
-                if let Err(error) = manager.refresh_config_integrity() {
-                    tracing::warn!("refresh model fallback integrity failed: {error}");
-                }
-            }
             Ok(updated)
         }
         Err(error) => match transaction.rollback() {
@@ -602,10 +614,6 @@ pub async fn models(provider: &Provider) -> Result<Vec<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
-
-    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
     fn provider() -> Provider {
         Provider {
             id: "provider-1".into(),
@@ -678,7 +686,6 @@ mod tests {
 
     #[test]
     fn activate_initializes_empty_codex_files() {
-        let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
         let root = std::env::temp_dir().join(format!(
             "julong-provider-activate-{}",
             Uuid::new_v4().simple()
@@ -687,14 +694,7 @@ mod tests {
         fs::write(root.join("config.toml"), "").unwrap();
         fs::write(root.join("auth.json"), "").unwrap();
 
-        let previous = std::env::var_os("CODEX_HOME");
-        std::env::set_var("CODEX_HOME", &root);
-        let result = activate(&provider(), true);
-        if let Some(value) = previous {
-            std::env::set_var("CODEX_HOME", value);
-        } else {
-            std::env::remove_var("CODEX_HOME");
-        }
+        let result = activate_at(&root, &provider(), true);
 
         result.unwrap();
         let config = fs::read_to_string(root.join("config.toml")).unwrap();
@@ -708,7 +708,6 @@ mod tests {
 
     #[test]
     fn model_fallback_persistence_does_not_touch_auth() {
-        let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
         let root = std::env::temp_dir().join(format!(
             "julong-provider-model-fallback-{}",
             Uuid::new_v4().simple()
@@ -726,14 +725,7 @@ mod tests {
         provider.models = vec!["gpt-5.6-sol".into(), "gpt-5.6".into()];
         save_list(&root, &[provider.clone()]).unwrap();
 
-        let previous = std::env::var_os("CODEX_HOME");
-        std::env::set_var("CODEX_HOME", &root);
-        let updated = persist_default_model(&provider.id, "gpt-5.6");
-        if let Some(value) = previous {
-            std::env::set_var("CODEX_HOME", value);
-        } else {
-            std::env::remove_var("CODEX_HOME");
-        }
+        let updated = persist_default_model_at(&root, &provider.id, "gpt-5.6");
 
         assert_eq!(updated.unwrap().default_model, "gpt-5.6");
         assert!(fs::read_to_string(root.join("config.toml"))

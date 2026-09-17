@@ -538,7 +538,7 @@ Windows 使用 `%USERPROFILE%` 解析默认目录；macOS 使用 `$HOME`。`~/.j
 
 每个选中目录额外保存 `.julong/connection.json` 与 `.julong/packs/`。原生说明文件不提前释放模型指令，完整指令在程序开关启用后才由代理注入。Grok、DeepSeek、GLM 的客户端加载约定并不统一；应以所用客户端的自定义上下文、API 地址和请求头设置为准。本次不自动修改未知客户端的鉴权或配置格式，也不扩散写入未选择的 Hermes/ZCode 目录。
 
-客户端使用 `x-julong-session: <每个对话唯一的 ID>` 与 `x-julong-environment: codex|claude|grok|deepseek|glm53|gemini` 标识会话。兼容已有 `session_id`、`x-session-id`、`x-codex-session-id` 请求头，以及 `metadata.session_id` / `metadata.user_id`。没有会话标识时不会声称启用成功。会话还按认证信息和环境隔离，空闲 30 分钟过期，最多保存 100 个，代理重启清空；验收对话框的会话与外部客户端会话独立。
+客户端使用 `x-julong-session: <每个对话唯一的 ID>` 与 `x-julong-environment: codex|claude|grok|deepseek|glm53|gemini` 标识会话。Codex 原生的 `thread-id`、`session-id` 请求头会自动识别，无需手动添加矩龙请求头；同时保留 `session_id`、`x-session-id`、`x-codex-session-id` 以及 `metadata.session_id` / `metadata.user_id` 的兼容。显式 `x-julong-session` 优先；原生头中优先使用 `thread-id`，避免缓存亲和标识相同的不同对话共享启用状态。没有会话标识时不会声称启用成功。会话还按认证信息和环境隔离，空闲 30 分钟过期，最多保存 100 个，代理重启清空；验收对话框的会话与外部客户端会话独立。
 
 口令仅匹配当前用户纯文本消息的完整内容（允许首尾空白）。系统指令、工具输出、附件、引用示例和历史口令不触发启用。回执是**本地程序状态**，不代表远端模型已返回回答，也不代表模型权限改变。未激活请求继续正常转发，但不注入所选词包。
 
@@ -561,3 +561,23 @@ cargo build --manifest-path src-tauri/Cargo.toml --bin julong-codex
 Windows 目标机同样运行上述 Node / Cargo / Python 检查，CLI 改用 `src-tauri\target\debug\julong-codex.exe`。完整交付仍由 Windows 目标机运行 `build-windows.ps1` / `build-windows.cmd` 生成 NSIS `.exe` 安装程序；macOS 的 `build-windows.sh` 仅用于它声明的交叉编译范围，不能替代 Windows 安装验收。六包通过现有 `copy-resources.mjs` 递归复制，并由 Tauri 既有 `instruction-packs/` 资源映射包含，Rust 中另有编译期嵌入，不依赖安装源目录。
 
 自动验收 `src-tauri/tests/multi_environment.rs` 使用临时目录与本机 HTTP 服务验证六包部署、幂等性、取消选择、路径迁移、逐字节还原、外部修改保护、会话隔离、口令及四种协议。该验证不使用生产 API Key；真实供应商对六种模型的可用性和 Windows 安装体验仍需对应运行环境验证。
+
+### v0.2.7：修复 Codex 原生会话识别
+
+Codex 会发送带连字符的 `thread-id` / `session-id`；v0.2.6 只识别 `session_id` 等旧字段，导致真实对话单独发送“矩龙”后收到“缺少会话标识”。v0.2.7 补齐原生字段，优先按 `thread-id` 隔离不同对话。没有有效标识仍不启用；“会话验收”窗口的成功状态仍不代替外部对话的启用状态。
+
+修复共用 Rust 代理逻辑，桌面端和 CLI、macOS 和 Windows 都使用同一实现。按原有平台构建步骤更新应用或 CLI 后，重启对应代理再在真实对话中发送口令；仅重新部署说明文件不会更新已运行的二进制。
+
+除常规检查外，新增本机 Codex 核心验收：隔离配置目录、空闲本机端口、临时上游和测试凭据，不调用远端模型。覆盖原生客户端收到程序回执、恢复同一对话后的模型包注入，以及新对话不继承状态。
+
+macOS（设置为实际安装的 Codex 原生可执行文件）：
+
+```bash
+JULONG_CODEX_TEST_BIN="/Applications/ChatGPT.app/Contents/Resources/codex" cargo test --manifest-path src-tauri/Cargo.toml --test codex_client -- --ignored --nocapture
+```
+
+Windows 目标机：将 `JULONG_CODEX_TEST_BIN` 环境变量设为已安装的原生 `codex.exe` 的完整路径（非 npm 的 `.cmd` 包装脚本），再运行同一条 `cargo test --manifest-path src-tauri/Cargo.toml --test codex_client -- --ignored --nocapture`。未配置客户端二进制时，该附加测试默认忽略，常规 Rust 测试仍会验证原生请求头和会话隔离。
+
+供应商测试改为显式传入临时目录，不再通过全局 `CODEX_HOME` 选择测试目录，避免已保存的环境选择把测试写入真实客户端配置。
+
+验证结果及范围见 `docs/verification-0.2.7.md`。

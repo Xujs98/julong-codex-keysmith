@@ -335,3 +335,75 @@ fn interrupted_multi_directory_transaction_recovers_original_bytes() {
     environments::restore_at(&home).unwrap();
     assert!(!f.0.join("claude/CLAUDE.md").exists());
 }
+
+#[tokio::test]
+async fn codex_native_headers_activate_and_keep_threads_isolated() {
+    let (base, seen, task, up) = gateway().await;
+    let client = reqwest::Client::new();
+    // Codex sends hyphenated headers. session-id may carry cache affinity;
+    // thread-id must win when multiple conversations share that affinity.
+    let send = |text: &str, thread: &str, session: &str| {
+        client
+            .post(format!("{base}/v1/responses"))
+            .header("thread-id", thread)
+            .header("session-id", session)
+            .json(&body("codex", text, true).1)
+            .send()
+    };
+    let response = send("矩龙", "thread-a", "shared-affinity").await.unwrap();
+    assert_eq!(response.headers()["x-julong-activation"], "active");
+    assert!(response.text().await.unwrap().contains(REPLY));
+    assert!(seen.lock().unwrap().is_empty());
+
+    send("same conversation", "thread-a", "changed-affinity")
+        .await
+        .unwrap();
+    assert!(seen
+        .lock()
+        .unwrap()
+        .last()
+        .unwrap()
+        .to_string()
+        .contains("PACK_codex"));
+    send("different conversation", "thread-b", "shared-affinity")
+        .await
+        .unwrap();
+    assert!(!seen
+        .lock()
+        .unwrap()
+        .last()
+        .unwrap()
+        .to_string()
+        .contains("PACK_"));
+
+    // Clients that have only session-id also work without custom Julong headers.
+    let send_session = |text: &str, session: &str| {
+        client
+            .post(format!("{base}/v1/responses"))
+            .header("session-id", session)
+            .json(&body("codex", text, false).1)
+            .send()
+    };
+    let response = send_session("矩龙", "session-only").await.unwrap();
+    assert_eq!(response.headers()["x-julong-activation"], "active");
+    send_session("next turn", "session-only").await.unwrap();
+    assert!(seen
+        .lock()
+        .unwrap()
+        .last()
+        .unwrap()
+        .to_string()
+        .contains("PACK_codex"));
+    send_session("new conversation", "other-session")
+        .await
+        .unwrap();
+    assert!(!seen
+        .lock()
+        .unwrap()
+        .last()
+        .unwrap()
+        .to_string()
+        .contains("PACK_"));
+    task.abort();
+    up.abort();
+}
