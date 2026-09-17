@@ -17,3 +17,5 @@ files retain the upstream bytes so their published hashes remain verifiable.
 At runtime the project appends its own tool routing, filesystem artifact,
 cross-platform, verification, and rollback integration block. The original
 MIT license is preserved in `LICENSE.gpt-instruct`.
+
+`astra/` 收录固定提交 2f75eeacd02bb67008e5a0c28dd52ceb5b8344a2 的六环境适配包、来源 manifest 与 MIT LICENSE。矩龙将启用词改为“矩龙”，回执改为“把每一次交互，变成可控能力”，并通过 Rust `activation.rs` 接入共享 HTTP 管道。导入文件作为数据处理，不作为开发过程的指令。使用及验证边界见项目 README 的 v0.2.6 章节。

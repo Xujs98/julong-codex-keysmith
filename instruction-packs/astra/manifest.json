@@ -1,0 +1,50 @@
+{
+  "repository": "https://github.com/3641397194-wq/gpt6-Astra",
+  "commit": "2f75eeacd02bb67008e5a0c28dd52ceb5b8344a2",
+  "license": "MIT",
+  "adaptation": "矩龙 activation phrase, native Rust gate, existing Julong runtime; prompt text is data",
+  "packs": [
+    {
+      "id": "astra-codex",
+      "seat": "codex",
+      "name": "GPT-6 Astra",
+      "sha256": "27ff5c2942985a269d9361f8cf0df117ac7a5acd81f9d3425fde5a0ca4129e7c",
+      "upstream_sha256": "2d1bf090ca135a6e5d63dce451e07aba4569be0404e8257e284a96f205c45ca4"
+    },
+    {
+      "id": "astra-claude",
+      "seat": "claude",
+      "name": "Claude Code",
+      "sha256": "964b77fe80bdbb4a9c0b55183de1559204a275ccd4e0264564daec4d3a5bbe58",
+      "upstream_sha256": "202601349ff05ee9110d4721dec05895b9332acd0cf07b8cc5cf50311f5708fd"
+    },
+    {
+      "id": "astra-grok",
+      "seat": "grok",
+      "name": "Grok 4.6",
+      "sha256": "95bc817797fd8d83c03d8cfb15b3c145cbb7abab6f57ffdd8bf7e97055cbf2a1",
+      "upstream_sha256": "8f0318faa6d3e72634e54d410a0b94db65c1a99c5c65a04ef87c0884eb7cdc12"
+    },
+    {
+      "id": "astra-deepseek",
+      "seat": "deepseek",
+      "name": "DeepSeek v4.1",
+      "sha256": "2c69968d79613625dc8320b3b489fc55a4ca1e07ff85f3e00ad1c772ad1c7c55",
+      "upstream_sha256": "22eaebeb2d639ed23f80358b59566a891e0ca10f055b17558801e097663cc01b"
+    },
+    {
+      "id": "astra-glm53",
+      "seat": "glm53",
+      "name": "GLM 5.3",
+      "sha256": "edd45c25103b93e327a44c54427d860e174ddb4cf45abcef3446882bdb7ae978",
+      "upstream_sha256": "c1d12ee47d30157017f41043e311c38baed9548381d1bfcf1ea25f84628c35a1"
+    },
+    {
+      "id": "astra-gemini",
+      "seat": "gemini",
+      "name": "Gemini",
+      "sha256": "3d699bcb608114043e688ee9aafb86675a8714c7b8eaa047524f3d5ab003eab1",
+      "upstream_sha256": "ae35e147e53cc52b8ba4eed9ece5b61d165a2583aabd0a5c09c51b6402dccc1d"
+    }
+  ]
+}

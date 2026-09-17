@@ -629,6 +629,9 @@ fn build_report(home: Option<&Path>, profile_id: &str) -> Result<GateReport, Str
 }
 
 pub fn ensure_deployable(profile_id: &str) -> Result<(), String> {
+    if crate::upstream::prompt(profile_id).is_some() {
+        return crate::upstream::verify(profile_id);
+    }
     if instruction::prompt_source(profile_id).is_none() {
         return Ok(());
     }

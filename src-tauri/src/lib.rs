@@ -1,3 +1,6 @@
+pub mod activation;
+pub mod environments;
+pub mod upstream;
 // Super-Instruct — Tauri 桌面应用入口
 // MITM Core 作为 Tauri 后端进程运行，前端通过事件系统接收实时数据
 
@@ -30,7 +33,7 @@ const BRIDGE_MD_FALLBACK: &str = include_str!("../../bridge.md");
 use crate::core::MitmCore;
 use crate::deploy::DeployManager;
 use crate::extensions::activity::{ActivityStatus, ActivityTracker};
-use crate::extensions::inject::SystemPromptInjector;
+
 use crate::extensions::memory::MemoryKernel;
 use crate::extensions::monitor::{InteractionEvent, MonitorPanel, StatsEvent};
 use crate::extensions::responses_sse::wrap_replacement_as_sse;
@@ -116,6 +119,7 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            if let Err(error) = environments::recover_at(&environments::state_home()) { tracing::error!("环境事务恢复失败: {error}"); }
             // 仅恢复崩溃中断的文件事务。普通停止会保留部署文件与 Codex 配置，
             // 后续可直接重新启动代理；完整回滚只由显式“还原”操作触发。
             if let Some(manager) = DeployManager::new() {
@@ -211,6 +215,10 @@ pub fn run() {
             get_codex_info,
             get_adapters,
             get_instruction_profiles,
+            get_environments,
+            set_environments,
+            detect_environment,
+            activation_probe,
             set_instruction_profile,
             get_instruction_lab,
             run_instruction_gate,
@@ -317,10 +325,14 @@ async fn start_proxy(
     })?;
 
     // Skills 开关在本地即时同步，启动代理时再校准一次目标目录。
-    let skills_sync_message = skills::sync_enabled_skills(&app)?;
+    let skills_sync_message = if environments::codex_enabled() {
+        skills::sync_enabled_skills(&app)?
+    } else {
+        "未选中 Codex，未写入 Codex Skills".into()
+    };
 
     // 2. 读取 bridge.md — 文件查找失败时用编译期嵌入的 fallback
-    let base_instructions = match resolve_resource_file(&app, "bridge.md") {
+    let _base_instructions = match resolve_resource_file(&app, "bridge.md") {
         Ok(path) => std::fs::read_to_string(&path).unwrap_or_else(|e| {
             tracing::warn!(
                 "start_proxy: read bridge.md failed ({}), using embedded fallback",
@@ -336,38 +348,10 @@ async fn start_proxy(
             BRIDGE_MD_FALLBACK.to_string()
         }
     };
-    let profile = instruction::selected(manager.codex_home());
-    instruction_lab::ensure_deployable(profile.id)?;
-    let instructions = instruction::render(&base_instructions, profile.id)?;
-    tracing::info!(
-        "start_proxy: model instruction = {} ({})",
-        profile.id,
-        profile.name
-    );
-
-    // 3. 部署 — bridge_active 不足以判断完整部署，需验证 bridge_exists 和 relay_url_valid
-    let status = manager.status();
-    let needs_deploy = !status.bridge_active
-        || !status.bridge_exists
-        || !status.relay_url_valid
-        || !manager.instruction_profile_matches(profile.id);
-
-    if needs_deploy {
-        tracing::info!(
-            "start_proxy: deploying (bridge_active={}, bridge_exists={}, relay_valid={})",
-            status.bridge_active,
-            status.bridge_exists,
-            status.relay_url_valid
-        );
-        match manager.apply_with_optional_skills(&instructions, None) {
-            Ok(msg) => tracing::info!("start_proxy: auto-deploy: {}", msg),
-            Err(e) => {
-                tracing::error!("start_proxy: auto-deploy failed: {}", e);
-                return Err(format!("Auto-deploy failed: {}", e));
-            }
-        }
-    } else {
-        tracing::info!("start_proxy: already fully deployed, skipping auto-deploy");
+    environments::deploy()?;
+    let instructions = environments::transport_bridge(manager.codex_home());
+    if environments::codex_enabled() {
+        manager.apply_with_optional_skills(&instructions, None)?;
     }
 
     // 4. 验证 relay URL — 无有效地址则阻断启动（防自环）
@@ -444,7 +428,7 @@ async fn start_proxy(
     // 6. 构建 MitmCore
     let core = match MitmCore::builder()
         .target(&relay_url)
-        .request_interceptor(SystemPromptInjector::new(instructions))
+        .activation_gate(activation::ActivationGate::deployed()?)
         .response_parser(UniversalSseParser)
         .response_interceptor(tamper)
         .response_interceptor(memory.clone())
@@ -605,7 +589,11 @@ async fn stop_proxy(
 async fn deploy_bridge(app: tauri::AppHandle) -> Result<String, String> {
     tracing::info!("deploy_bridge: starting");
     let manager = DeployManager::new().ok_or("Codex home not found")?;
-    let skills_sync_message = skills::sync_enabled_skills(&app)?;
+    let skills_sync_message = if environments::codex_enabled() {
+        skills::sync_enabled_skills(&app)?
+    } else {
+        "未选中 Codex，未写入 Codex Skills".into()
+    };
     // bridge.md: 文件查找优先，fallback 用编译期嵌入版本
     let base_bridge_md = match resolve_resource_file(&app, "bridge.md") {
         Ok(path) => std::fs::read_to_string(&path).unwrap_or_else(|e| {
@@ -623,30 +611,33 @@ async fn deploy_bridge(app: tauri::AppHandle) -> Result<String, String> {
             BRIDGE_MD_FALLBACK.to_string()
         }
     };
-    let profile = instruction::selected(manager.codex_home());
-    instruction_lab::ensure_deployable(profile.id)?;
-    let bridge_md = instruction::render(&base_bridge_md, profile.id)?;
-    tracing::info!(
-        "deploy_bridge: model instruction = {} ({})",
-        profile.id,
-        profile.name
-    );
-    // Skills 由管理页独立同步，部署事务只处理 bridge/config。
-    let result = manager
-        .apply_with_optional_skills(&bridge_md, None)
-        .map(|message| format!("{}；{}", message, skills_sync_message));
-    match &result {
-        Ok(msg) => tracing::info!("deploy_bridge: {}", msg),
-        Err(e) => tracing::error!("deploy_bridge: failed: {}", e),
+    let _ = base_bridge_md; // Native model packs are selected by the shared environment manager.
+    environments::preview_at(&environments::state_home(), &environments::load()?)?;
+    let message = environments::deploy()?;
+    if environments::codex_enabled() {
+        if let Err(error) = manager
+            .apply_with_optional_skills(&environments::transport_bridge(manager.codex_home()), None)
+        {
+            environments::restore()?;
+            return Err(error);
+        }
     }
-    result
+    Ok(format!(
+        "{message}；{skills_sync_message}；代理运行中请重启以加载新选择"
+    ))
 }
 
 #[tauri::command]
 async fn restore_codex() -> Result<String, String> {
     tracing::info!("restore_codex: starting");
     let manager = DeployManager::new().ok_or("Codex home not found")?;
-    let result = manager.restore();
+    if runtime::port_is_listening() {
+        return Err("请先停止代理再还原，避免运行时仍使用旧会话".into());
+    }
+    let environment_message = environments::restore()?;
+    let result = manager
+        .restore()
+        .map(|m| format!("{m}；{environment_message}"));
     match &result {
         Ok(msg) => tracing::info!("restore_codex: {}", msg),
         Err(e) => tracing::error!("restore_codex: failed: {}", e),
@@ -695,7 +686,8 @@ async fn restore_clean_environment(
         return Err("代理端口仍在监听，已保留 Codex 配置未执行清理".into());
     }
 
-    let message = manager.restore_clean()?;
+    let environment_message = environments::restore()?;
+    let message = format!("{}；{}", manager.restore_clean()?, environment_message);
     let _ = app.emit("proxy-status", "stopped");
     let _ = app.emit(
         "interaction",
@@ -776,12 +768,12 @@ fn get_adapters() -> Vec<adapters::AdapterInfo> {
 
 #[tauri::command]
 fn get_instruction_profiles() -> Result<serde_json::Value, String> {
-    let selected = DeployManager::find_codex_home()
-        .map(|home| instruction::selected_id(&home))
-        .unwrap_or_else(|| instruction::DEFAULT_PROFILE.to_string());
+    let settings = environments::load()?;
+    let selected = settings.profiles.first().cloned().unwrap_or_default();
     Ok(serde_json::json!({
         "selected": selected,
         "profiles": instruction::list_profiles(),
+        "selected_profiles": settings.profiles,
     }))
 }
 
@@ -789,6 +781,12 @@ fn get_instruction_profiles() -> Result<serde_json::Value, String> {
 fn set_instruction_profile(profile: String) -> Result<serde_json::Value, String> {
     let home = DeployManager::find_codex_home().ok_or("Codex home not found")?;
     let selected = instruction::save(&home, profile.trim())?;
+    let mut settings = environments::load()?;
+    settings
+        .profiles
+        .retain(|p| environments::family(p) != environments::family(selected.id));
+    settings.profiles.push(selected.id.into());
+    environments::save(settings)?;
     Ok(serde_json::json!({
         "ok": true,
         "selected": selected.id,
@@ -1021,14 +1019,13 @@ async fn get_deploy_status() -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-async fn preview_deployment(app: tauri::AppHandle) -> Result<crate::deploy::DeployPreview, String> {
-    let manager = DeployManager::new().ok_or("Codex home not found")?;
-    let skills_dir = resolve_resource_dir(&app, "codex-skills").ok();
-    Ok(manager.preview(skills_dir.as_deref()))
+async fn preview_deployment(_app: tauri::AppHandle) -> Result<environments::Preview, String> {
+    environments::preview_at(&environments::state_home(), &environments::load()?)
 }
 
 #[tauri::command]
 async fn recover_deployment() -> Result<String, String> {
+    environments::recover_at(&environments::state_home())?;
     let manager = DeployManager::new().ok_or("Codex home not found")?;
     match manager.recover_pending()? {
         Some(message) => Ok(message),
@@ -1522,6 +1519,10 @@ async fn handle_proxy(
         .path_and_query()
         .map(|pq| pq.to_string())
         .unwrap_or_else(|| parts.uri.path().to_string());
+
+    if let Some(response) = core.local_response(&parts.headers, &bytes, &path_and_query) {
+        return response;
+    }
 
     // 阶段 1: 请求拦截 + 转发上游
     let method = parts.method.clone();
@@ -2068,4 +2069,50 @@ mod proxy_tests {
         assert_eq!(value["input"], "keep me");
         assert_eq!(request_model(&rewritten).as_deref(), Some("gpt-5.6"));
     }
+}
+
+#[tauri::command]
+fn get_environments() -> Result<serde_json::Value, String> {
+    environments::snapshot()
+}
+#[tauri::command]
+fn set_environments(settings: environments::Settings) -> Result<environments::Settings, String> {
+    environments::save(settings)
+}
+#[tauri::command]
+fn detect_environment(environment: String) -> Result<Vec<String>, String> {
+    environments::detect(&environment)
+}
+#[tauri::command]
+async fn activation_probe(
+    environment: String,
+    session: String,
+    text: String,
+) -> Result<serde_json::Value, String> {
+    if environments::metadata(&environment).is_none()
+        || session.len() > 128
+        || session.is_empty()
+        || text.len() > 20000
+    {
+        return Err("会话参数无效".into());
+    }
+    let response=reqwest::Client::new().post("http://127.0.0.1:8080/julong/activation")
+        .timeout(std::time::Duration::from_secs(5))
+        .header("x-julong-session",session).header("x-julong-environment",environment)
+        .json(&serde_json::json!({"model":"julong-local","messages":[{"role":"user","content":text}]}))
+        .send().await.map_err(|e|format!("请先启动本版本矩龙代理：{e}"))?;
+    let active = response
+        .headers()
+        .get("x-julong-activation")
+        .and_then(|v| v.to_str().ok())
+        == Some("active");
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("代理不支持会话验收，请重启本版本代理：{e}"))?;
+    let reply = body
+        .pointer("/choices/0/message/content")
+        .and_then(|v| v.as_str())
+        .ok_or("代理未返回会话回执")?;
+    Ok(serde_json::json!({"active":active,"reply":reply,"source":"local-program-gate"}))
 }

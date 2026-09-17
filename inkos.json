@@ -1,6 +1,6 @@
 {
   "name": "矩龙破甲",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "language": "zh",
   "llm": {
     "provider": "openai",

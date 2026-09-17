@@ -396,3 +396,29 @@ body.modal-open{overflow:hidden}
   .model-download{height:38px}
   .provider-modal-footer{padding:12px 18px 16px}
 }
+
+/* Client environments use styled, keyboard-operable controls on both desktop platforms. */
+.environment-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.environment-card { border: 1px solid var(--line-color); border-radius: 16px; padding: 16px; background: var(--surface-strong); min-width: 0; }
+.environment-card.selected { border-color: var(--accent-main); box-shadow: inset 0 0 0 1px var(--accent-main); }
+.environment-heading { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.environment-heading small { margin-left: auto; color: var(--ink-faint); }
+.environment-check { appearance: none; width: 26px; height: 26px; border: 2px solid #aebbd2; border-radius: 8px; color: white; background: transparent; cursor: pointer; font-weight: 700; flex: 0 0 auto; }
+.environment-check[aria-checked="true"] { background: var(--accent-main); border-color: var(--accent-main); }
+.environment-path { display: flex; align-items: baseline; gap: 12px; margin: 16px 0 12px; }
+.environment-path small { white-space: nowrap; color: var(--ink-faint); }
+.environment-path span { overflow-wrap: anywhere; font-size: 13px; }
+.environment-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.environment-actions .btn { padding: 7px 10px; font-size: 12px; }
+.environment-check:focus-visible, .environment-dialog input:focus-visible { outline: 3px solid var(--accent-main); outline-offset: 3px; }
+.environment-modal { position: fixed; inset: 0; z-index: 10000; background: #17203966; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.environment-modal[hidden] { display: none; }
+.environment-dialog { width: min(580px, 100%); max-height: 85vh; overflow: auto; border-radius: 22px; background: var(--surface-strong); color: var(--ink); box-shadow: 0 20px 60px #10204044; padding: 24px; }
+.environment-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.environment-dialog h2 { font-size: 19px; margin: 0; }
+.environment-dialog form { display: grid; gap: 14px; margin: 22px 0; }
+.environment-dialog input { appearance: none; border: 1px solid #b9c5dc; background: var(--surface-strong); color: inherit; border-radius: 12px; padding: 13px; width: 100%; box-sizing: border-box; font: inherit; }
+.environment-dialog p, .environment-dialog-result { margin-top: 18px; line-height: 1.6; overflow-wrap: anywhere; }
+.environment-dialog-result { color: var(--accent-main); }
+.environment-directory { display: block; margin-top: 12px; overflow-wrap: anywhere; text-align: left; width: 100%; }
+@media (max-width: 1080px) { .environment-grid { grid-template-columns: 1fr; } }

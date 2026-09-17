@@ -19,6 +19,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub struct MitmCore {
+    activation: Option<std::sync::Mutex<crate::activation::ActivationGate>>,
     target: Arc<RwLock<String>>,
     client: Client,
     request_interceptors: Vec<Box<dyn RequestInterceptor>>,
@@ -38,6 +39,20 @@ pub struct UpstreamResult {
 impl MitmCore {
     pub fn builder() -> MitmCoreBuilder {
         MitmCoreBuilder::new()
+    }
+
+    pub fn local_response(
+        &self,
+        headers: &HeaderMap,
+        body: &[u8],
+        path: &str,
+    ) -> Option<axum::response::Response> {
+        let data = serde_json::from_slice(body).ok()?;
+        self.activation
+            .as_ref()?
+            .lock()
+            .ok()?
+            .local_response(headers, &data, path)
     }
 
     pub async fn set_target(&self, target: impl Into<String>) {
@@ -77,15 +92,24 @@ impl MitmCore {
             body: data,
         };
 
-        // 2. 请求拦截器 — 全量执行
-        for ext in &self.request_interceptors {
+        let active = match &self.activation {
+            Some(gate) => gate.lock().map_err(|e| e.to_string())?.inject(
+                &req_ctx.headers,
+                &mut req_ctx.body,
+                &path_and_query,
+            ),
+            None => true,
+        };
+
+        // 2. 请求拦截器 — 会话启用后执行
+        for ext in self.request_interceptors.iter().filter(|_| active) {
             tracing::trace!(interceptor = ext.name(), "request interceptor running");
             ext.intercept(&mut req_ctx);
         }
 
         // 3. 转发到上游 — 跳过 hop-by-hop 头
         let target = self.target.read().await.clone();
-        let url = format!("{}{}", target, path_and_query);
+        let url = upstream_url(&target, &path_and_query);
         tracing::debug!(url = %url, "forwarding to upstream");
 
         let mut forward_headers = HeaderMap::new();
@@ -97,6 +121,7 @@ impl MitmCore {
                 || lower == "content-length"
                 || lower == "content-type"
                 || lower == "accept-encoding"
+                || lower.starts_with("x-julong-")
             {
                 continue;
             }
@@ -188,6 +213,7 @@ impl MitmCore {
 }
 
 pub struct MitmCoreBuilder {
+    activation: Option<crate::activation::ActivationGate>,
     target: Option<String>,
     client: Option<Client>,
     request_interceptors: Vec<Box<dyn RequestInterceptor>>,
@@ -198,12 +224,18 @@ pub struct MitmCoreBuilder {
 impl MitmCoreBuilder {
     pub fn new() -> Self {
         Self {
+            activation: None,
             target: None,
             client: None,
             request_interceptors: Vec::new(),
             response_parser: None,
             response_interceptors: Vec::new(),
         }
+    }
+
+    pub fn activation_gate(mut self, gate: crate::activation::ActivationGate) -> Self {
+        self.activation = Some(gate);
+        self
     }
 
     pub fn target(mut self, target: impl Into<String>) -> Self {
@@ -233,6 +265,7 @@ impl MitmCoreBuilder {
 
     pub fn build(self) -> Result<MitmCore, String> {
         Ok(MitmCore {
+            activation: self.activation.map(std::sync::Mutex::new),
             target: Arc::new(RwLock::new(self.target.ok_or("target not set")?)),
             client: self.client.unwrap_or_else(|| {
                 Client::builder()
@@ -250,5 +283,39 @@ impl MitmCoreBuilder {
 impl Default for MitmCoreBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Native clients may include /v1 while a configured relay already ends in /v1.
+fn upstream_url(target: &str, path: &str) -> String {
+    let base = target.trim_end_matches('/');
+    if path.starts_with("/v1/") || path.starts_with("/v1beta/") {
+        for suffix in ["/v1", "/v1beta"] {
+            if let Some(prefix) = base.strip_suffix(suffix) {
+                return format!("{prefix}{path}");
+            }
+        }
+    }
+    format!("{base}{path}")
+}
+#[cfg(test)]
+mod url_tests {
+    #[test]
+    fn version_prefix_is_not_duplicated() {
+        assert_eq!(
+            super::upstream_url("https://relay.example/api/v1", "/v1/messages"),
+            "https://relay.example/api/v1/messages"
+        );
+        assert_eq!(
+            super::upstream_url("https://relay.example/v1", "/responses"),
+            "https://relay.example/v1/responses"
+        );
+        assert_eq!(
+            super::upstream_url(
+                "https://relay.example/v1",
+                "/v1beta/models/gemini:generateContent"
+            ),
+            "https://relay.example/v1beta/models/gemini:generateContent"
+        );
     }
 }

@@ -27,6 +27,7 @@ cleanup() {
   rm -rf "$TMP_HOME"
 }
 trap cleanup EXIT INT TERM
+export JULONG_HOME="$TMP_HOME/julong-state"
 
 cat > "$TMP_HOME/config.toml" <<'EOF'
 model = "verification-model"

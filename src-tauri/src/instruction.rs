@@ -51,8 +51,8 @@ fn default_profile() -> String {
     DEFAULT_PROFILE.to_string()
 }
 
-fn profiles() -> [InstructionProfile; 5] {
-    [
+fn profiles() -> Vec<InstructionProfile> {
+    let mut result = vec![
         InstructionProfile {
             id: "standard",
             name: "标准边界",
@@ -113,7 +113,9 @@ fn profiles() -> [InstructionProfile; 5] {
             source_sha256: GPT6_ASTRA_SHA256,
             source_bytes: GPT6_ASTRA_PROMPT.len(),
         },
-    ]
+    ];
+    result.extend(crate::upstream::profiles());
+    result
 }
 
 pub fn list_profiles() -> Vec<InstructionProfile> {
@@ -176,7 +178,7 @@ pub fn prompt_source(id: &str) -> Option<&'static str> {
     match id {
         GPT56_PROFILE => Some(GPT56_PROMPT),
         GPT6_ASTRA_PROFILE => Some(GPT6_ASTRA_PROMPT),
-        _ => None,
+        _ => crate::upstream::prompt(id),
     }
 }
 
@@ -215,7 +217,7 @@ mod tests {
 
     #[test]
     fn profiles_are_stable_and_rendered() {
-        assert_eq!(list_profiles().len(), 5);
+        assert_eq!(list_profiles().len(), 11);
         let base = "bridge";
         assert_eq!(render(base, DEFAULT_PROFILE).unwrap(), base);
         let expanded = render(base, "expanded").unwrap();

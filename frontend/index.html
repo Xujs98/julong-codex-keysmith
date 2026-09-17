@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>矩龙破甲 · v0.2.5</title>
+    <title>矩龙破甲 · v0.2.6</title>
     <link rel="stylesheet" href="styles.css">
     <script type="module" src="app.js"></script>
 </head>
@@ -14,7 +14,7 @@
     <div class="tb-logo" data-tauri-drag-region>
         <img class="tb-logo-image" src="assets/molong-logo.png" alt="矩龙破甲" data-tauri-drag-region>
         <span class="tb-logo-text" data-tauri-drag-region>矩龙破甲</span>
-        <span class="tb-logo-sub" data-tauri-drag-region>Desktop Edition · v0.2.5</span>
+        <span class="tb-logo-sub" data-tauri-drag-region>Desktop Edition · v0.2.6</span>
     </div>
     <div class="tb-spacer" data-tauri-drag-region></div>
     <button class="tb-btn" id="tb-minimize" title="最小化">—</button>
@@ -230,7 +230,7 @@
             <div class="dash-pad">
                 <section class="hero-card">
                     <div class="hero-copy">
-                        <div class="eyebrow">矩龙破甲 · v0.2.5</div>
+                        <div class="eyebrow">矩龙破甲 · v0.2.6</div>
                         <h1>把每一次交互，<span>变成可控能力。</span></h1>
                         <p>本地代理、指令增强与 Skills 工作流集中管理。数据留在本机，状态一目了然。</p>
                         <div class="hero-actions">
@@ -304,7 +304,13 @@
         <div class="main-content" id="page-config">
             <div class="config-scroll">
                 <div class="cfg-block">
-                    <div class="cfg-block-head">Codex 环境</div>
+                    <div class="cfg-block-head">客户端环境</div>
+                    <p class="cfg-block-hint">勾选要部署的环境，并为它选择模型指令。安装路径指客户端配置目录。</p>
+                    <div class="environment-grid" id="environment-grid" aria-label="客户端环境"></div>
+                    <p class="cfg-block-hint" id="environment-note" role="status" aria-live="polite">读取环境中…</p>
+                </div>
+                <div class="cfg-block">
+                    <div class="cfg-block-head">共享代理状态</div>
                     <div class="cfg-line"><div class="cfg-k">安装路径</div><div class="cfg-v" id="cfg-codex-home">--</div></div>
                     <div class="cfg-line"><div class="cfg-k">当前供应商</div><div class="cfg-v" id="cfg-provider-name">--</div></div>
                     <div class="cfg-line"><div class="cfg-k">部署状态</div><div class="cfg-v" id="cfg-bridge-status">--</div></div>
@@ -327,8 +333,8 @@
                 </div>
                 <div class="cfg-block instruction-boundary-block">
                     <div class="cfg-block-head">模型指令</div>
-                    <p class="cfg-block-hint">通用边界与模型专用指令包共用同一部署状态；专用包按目标模型选择，宿主工具权限保持不变。</p>
-                    <div class="instruction-profile-grid" id="instruction-profile-grid" role="radiogroup" aria-label="模型指令"></div>
+                    <p class="cfg-block-hint">支持多选不同模型的指令包；同一模型只选一个版本。部署为每个选中环境应用对应包，未选专用包时使用所选通用边界。</p>
+                    <div class="instruction-profile-grid" id="instruction-profile-grid" role="group" aria-label="模型指令"></div>
                     <div class="instruction-profile-note" id="instruction-profile-note" aria-live="polite">读取配置中…</div>
                 </div>
                 <div class="cfg-block adapter-block">
@@ -350,7 +356,7 @@
                 <div class="cfg-block">
                     <div class="cfg-block-head">部署操作</div>
                     <div class="cfg-ops">
-                        <button class="btn btn-red solid" id="btn-deploy">部署 bridge.md</button>
+                        <button class="btn btn-red solid" id="btn-deploy">部署所选环境</button>
                         <button class="btn btn-red" id="btn-restore">还原配置</button>
                         <button class="btn" id="btn-recover">恢复事务</button>
                     </div>
@@ -556,5 +562,12 @@
     </div>
 </div>
 
+<div class="environment-modal" id="environment-dialog" hidden>
+    <section class="environment-dialog" role="dialog" aria-modal="true" aria-labelledby="environment-dialog-title">
+        <header><h2 id="environment-dialog-title"></h2><button class="btn" id="environment-dialog-close" type="button" aria-label="关闭对话框">关闭</button></header>
+        <div id="environment-dialog-body"></div>
+        <div class="environment-dialog-result" id="environment-dialog-result" role="status" aria-live="polite"></div>
+    </section>
+</div>
 </body>
 </html>

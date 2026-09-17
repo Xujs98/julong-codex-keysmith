@@ -1,3 +1,4 @@
+import "./environments.js";
 // Super-Instruct — 前端事件监听 + 渲染 + Tauri 命令调用
 
 const { invoke } = window.__TAURI__.core;
@@ -726,6 +727,7 @@ $('log-next')?.addEventListener('click', () => { logPage++; renderLogPage(); });
 
 async function refreshCodexInfo() {
     try {
+        await window.JulongEnvironments.refresh();
         const info = await invoke('get_codex_info');
         el.cfgCodexHome.textContent = info.codex_home ?? '未检测到';
         await loadInstructionProfiles();
@@ -734,9 +736,9 @@ async function refreshCodexInfo() {
 
         if (info.codex_home) {
             try {
-                const status = await invoke('get_proxy_status');
-                el.cfgBridgeStatus.textContent = status === 'running' ? '已部署 · 代理运行中' : '已部署 · 代理未运行';
-                el.cfgBridgeStatus.className = 'cfg-v green';
+                const [status, deployment] = await Promise.all([invoke('get_proxy_status'), invoke('get_deploy_status')]);
+                el.cfgBridgeStatus.textContent = deployment.bridge_active ? (status === 'running' ? '已部署 · 代理运行中' : '已部署 · 代理未运行') : '未部署 Codex 传输配置';
+                el.cfgBridgeStatus.className = deployment.bridge_active ? 'cfg-v green' : 'cfg-v';
             } catch {
                 el.cfgBridgeStatus.textContent = '未知';
                 el.cfgBridgeStatus.className = 'cfg-v';
@@ -753,18 +755,19 @@ async function refreshCodexInfo() {
 async function loadInstructionProfiles() {
     if (!el.instructionProfileGrid) return;
     try {
+        const focusedProfile = document.activeElement?.dataset.profile;
         const result = await invoke('get_instruction_profiles');
         const profiles = result?.profiles || [];
-        const selected = result?.selected || 'standard';
+        const selected = result?.selected_profiles || [result?.selected || 'standard'];
         el.instructionProfileGrid.replaceChildren();
         profiles.forEach(profile => {
             const button = document.createElement('button');
             button.type = 'button';
-            button.className = `instruction-profile-card${profile.id === selected ? ' active' : ''}`;
+            button.className = `instruction-profile-card${selected.includes(profile.id) ? ' active' : ''}`;
             button.classList.add(profile.kind === 'model-pack' ? 'model-pack' : 'boundary-profile');
             button.dataset.profile = profile.id;
-            button.setAttribute('role', 'radio');
-            button.setAttribute('aria-checked', String(profile.id === selected));
+            button.setAttribute('role', 'checkbox');
+            button.setAttribute('aria-checked', String(selected.includes(profile.id)));
             button.setAttribute('aria-label', `${profile.name}，适配 ${profile.model_family}，${profile.effect}`);
             const title = document.createElement('strong');
             title.textContent = profile.name;
@@ -780,7 +783,7 @@ async function loadInstructionProfiles() {
             stages.textContent = (profile.stages || []).join(' → ');
             const mark = document.createElement('i');
             mark.setAttribute('aria-hidden', 'true');
-            mark.textContent = profile.id === selected ? '✓' : '';
+            mark.textContent = selected.includes(profile.id) ? '✓' : '';
             button.append(title, meta, summary, stages, mark);
             button.addEventListener('click', () => selectInstructionProfile(profile.id));
             button.addEventListener('keydown', event => {
@@ -794,10 +797,12 @@ async function loadInstructionProfiles() {
             });
             el.instructionProfileGrid.appendChild(button);
         });
-        const current = profiles.find(item => item.id === selected);
+        if (focusedProfile) el.instructionProfileGrid.querySelector(`[data-profile="${focusedProfile}"]`)?.focus();
+        if (!selected.length && el.instructionProfileNote) el.instructionProfileNote.textContent = "尚未选择模型指令，部署前请至少选择一个匹配包或通用边界。";
+        const current = profiles.find(item => selected.includes(item.id));
         if (current && el.instructionProfileNote) {
             const source = current.source_sha256 ? ` 来源 SHA-256：${current.source_sha256.slice(0, 12)}…。` : '';
-            el.instructionProfileNote.textContent = `${current.name}：${current.effect}。${source}保存后重新部署或重启代理生效。`;
+            el.instructionProfileNote.textContent = `已选择 ${selected.length} 个指令配置。${source}保存后重新部署并重启代理生效。`;
         }
     } catch (e) {
         if (el.instructionProfileNote) el.instructionProfileNote.textContent = `读取指令边界失败：${e}`;
@@ -806,8 +811,8 @@ async function loadInstructionProfiles() {
 
 async function selectInstructionProfile(profileId) {
     try {
-        const result = await invoke('set_instruction_profile', { profile: profileId });
-        showConfigMessage(result?.message || '指令边界已保存', 'ok');
+        await window.JulongEnvironments.toggleProfile(profileId);
+        showConfigMessage('模型指令选择已保存', 'ok');
         await loadInstructionProfiles();
     } catch (e) {
         showConfigMessage(String(e), 'err');

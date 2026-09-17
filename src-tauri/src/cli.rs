@@ -6,7 +6,6 @@
 use crate::adapters;
 use crate::core::MitmCore;
 use crate::deploy::DeployManager;
-use crate::extensions::inject::SystemPromptInjector;
 use crate::extensions::memory::MemoryKernel;
 use crate::extensions::responses_sse::wrap_replacement_as_sse;
 use crate::extensions::sse_parser::UniversalSseParser;
@@ -16,6 +15,7 @@ use crate::instruction_lab;
 use crate::mcp_tools::{load_catalog, run_mcp_stdio, ToolRunner, USER_CATALOG_FILE};
 use crate::providers;
 use crate::runtime;
+use crate::{activation, environments};
 use futures::StreamExt;
 use http::StatusCode;
 use serde_json::json;
@@ -33,6 +33,7 @@ pub fn run() -> i32 {
         Some("start") => command_start(),
         Some("stop") => command_stop(),
         Some("status") => command_status(),
+        Some("environment") => command_environment(&args[1..]),
         Some("instruction") => command_instruction(&args[1..]),
         Some("adapters") => command_adapters(),
         Some("mcp") => command_mcp(&args[1..]),
@@ -56,6 +57,7 @@ fn print_help() {
     println!("  julong-codex start");
     println!("  julong-codex stop");
     println!("  julong-codex status");
+    println!("  julong-codex environment list|detect ID|deploy|restore");
     println!("  julong-codex instruction list");
     println!("  julong-codex instruction show");
     println!("  julong-codex instruction set PROFILE");
@@ -83,16 +85,18 @@ fn print_help() {
 fn command_start() -> i32 {
     if runtime::port_is_listening() {
         if runtime::proxy_is_healthy() {
-            let deployment_ok = DeployManager::new()
-                .map(|manager| {
-                    let status = manager.status();
-                    let selected = instruction::selected(&manager.codex_home());
-                    status.bridge_active
-                        && status.integrity_ok
-                        && !status.transaction_pending
-                        && manager.instruction_profile_matches(selected.id)
-                })
-                .unwrap_or(false);
+            let deployment_ok = environments::deployed_settings().is_ok()
+                && (!environments::codex_enabled()
+                    || DeployManager::new()
+                        .map(|manager| {
+                            let status = manager.status();
+                            let selected = instruction::selected(&manager.codex_home());
+                            status.bridge_active
+                                && status.integrity_ok
+                                && !status.transaction_pending
+                                && manager.instruction_profile_matches(selected.id)
+                        })
+                        .unwrap_or(false));
             if !deployment_ok {
                 eprintln!("[FAIL] 矩龙代理已监听，但部署状态不一致，请使用应用内“还原”后重试");
                 return 1;
@@ -112,25 +116,22 @@ fn command_start() -> i32 {
             return 1;
         }
     };
-    let base_bridge = resource_file("bridge.md")
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .unwrap_or_else(|| BRIDGE_FALLBACK.to_string());
-    let selected_profile = instruction::selected(manager.codex_home());
-    if let Err(error) = instruction_lab::ensure_deployable(selected_profile.id) {
-        eprintln!("[FAIL] 生产门禁失败: {error}");
+    if let Err(error) = environments::deploy() {
+        eprintln!("[FAIL] {error}");
         return 1;
     }
-    let bridge = match instruction::render(&base_bridge, selected_profile.id) {
-        Ok(value) => value,
-        Err(error) => {
-            eprintln!("[FAIL] 模型指令配置无效: {error}");
+    if environments::codex_enabled() {
+        let skills = resource_candidates("codex-skills")
+            .into_iter()
+            .find(|p| p.is_dir());
+        if let Err(error) = manager.apply_with_optional_skills(
+            &environments::transport_bridge(manager.codex_home()),
+            skills.as_deref(),
+        ) {
+            let _ = environments::restore();
+            eprintln!("[FAIL] 部署失败: {error}");
             return 1;
         }
-    };
-    let skills = resource_dir("codex-skills");
-    if let Err(error) = manager.apply_with_optional_skills(&bridge, skills.as_deref()) {
-        eprintln!("[FAIL] 部署失败: {error}");
-        return 1;
     }
 
     // 与桌面端保持一致：供应商凭据与自定义 model provider 只在启动时
@@ -276,9 +277,22 @@ fn command_status() -> i32 {
     println!("transaction: {}", if pending { "PENDING" } else { "clean" });
     println!("relay: {relay}");
     println!("model instruction: {} ({})", profile.id, profile.name);
+    if let Ok(snapshot) = environments::snapshot() {
+        println!(
+            "environment selection: {}",
+            snapshot["settings"]["profiles"]
+        );
+        println!(
+            "environment pending changes: {}",
+            snapshot["pending_changes"]
+        );
+    }
+
     let consistent = manager.is_some()
         && !pending
-        && if running {
+        && if !environments::codex_enabled() {
+            !occupied || (running && environments::deployed_settings().is_ok())
+        } else if running {
             deployed
                 && integrity
                 && manager
@@ -349,6 +363,19 @@ fn command_instruction(args: &[String]) -> i32 {
             };
             match instruction::save(manager.codex_home(), id) {
                 Ok(item) => {
+                    let update = (|| -> Result<(), String> {
+                        let mut settings = environments::load()?;
+                        settings
+                            .profiles
+                            .retain(|p| environments::family(p) != environments::family(item.id));
+                        settings.profiles.push(item.id.into());
+                        environments::save(settings)?;
+                        Ok(())
+                    })();
+                    if let Err(e) = update {
+                        eprintln!("[FAIL] {e}");
+                        return 1;
+                    }
                     println!("[OK] 模型指令已设置为 {} ({})", item.id, item.name);
                     println!("[OK] 适配模型: {}", item.model_family);
                     println!("[OK] 重新部署或下次启动代理时生效");
@@ -768,14 +795,14 @@ async fn run_headless_proxy() -> Result<(), String> {
         .and_then(|path| std::fs::read_to_string(path).ok())
         .unwrap_or_else(|| BRIDGE_FALLBACK.to_string());
     let selected_profile = instruction::selected(manager.codex_home());
-    let bridge = instruction::render(&base_bridge, selected_profile.id)?;
+    let _bridge = instruction::render(&base_bridge, selected_profile.id)?;
     let memory = Arc::new(MemoryKernel::new(
         manager.codex_home().join("julong-memory.json"),
     ));
     let core = Arc::new(
         MitmCore::builder()
             .target(relay)
-            .request_interceptor(SystemPromptInjector::new(bridge))
+            .activation_gate(activation::ActivationGate::deployed()?)
             .response_parser(UniversalSseParser)
             .response_interceptor(TamperEngine::default_rules())
             .response_interceptor(memory)
@@ -784,13 +811,7 @@ async fn run_headless_proxy() -> Result<(), String> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
         .await
         .map_err(|e| format!("绑定 127.0.0.1:8080 失败: {e}"))?;
-    let shared = core.clone();
-    let app = axum::Router::new()
-        .route("/", axum::routing::get(|| async { "julong-codex ok" }))
-        .route(
-            "/{*path}",
-            axum::routing::any(move |request| headless_handler(request, shared.clone())),
-        );
+    let app = proxy_router(core);
     axum::serve(listener, app)
         .await
         .map_err(|e| format!("代理服务异常: {e}"))
@@ -823,6 +844,9 @@ async fn headless_handler(
         .path_and_query()
         .map(|value| value.to_string())
         .unwrap_or_else(|| parts.uri.path().to_string());
+    if let Some(response) = core.local_response(&parts.headers, &bytes, &path) {
+        return response;
+    }
     let upstream = match core
         .handle_request(parts.method, path, parts.headers, bytes)
         .await
@@ -920,12 +944,6 @@ fn resource_file(name: &str) -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
-fn resource_dir(name: &str) -> Option<PathBuf> {
-    resource_candidates(name)
-        .into_iter()
-        .find(|path| path.is_dir())
-}
-
 fn resource_candidates(name: &str) -> Vec<PathBuf> {
     let mut result = Vec::new();
     if let Ok(cwd) = std::env::current_dir() {
@@ -969,4 +987,37 @@ fn positional_mcp_args(args: &[String], skip: usize) -> Vec<&String> {
         }
     }
     result
+}
+
+fn command_environment(args: &[String]) -> i32 {
+    let result = match args.first().map(String::as_str).unwrap_or("list") {
+        "list" => environments::snapshot().map(|v| v.to_string()),
+        "detect" => args
+            .get(1)
+            .ok_or("缺少环境 ID".into())
+            .and_then(|id| environments::detect(id).map(|v| serde_json::json!(v).to_string())),
+        "deploy" => environments::deploy(),
+        "restore" if runtime::port_is_listening() => Err("请先停止代理再还原环境".into()),
+        "restore" => environments::restore(),
+        _ => Err("用法: julong-codex environment list|detect ID|deploy|restore".into()),
+    };
+    match result {
+        Ok(v) => {
+            println!("{v}");
+            0
+        }
+        Err(e) => {
+            eprintln!("[FAIL] {e}");
+            1
+        }
+    }
+}
+
+pub fn proxy_router(core: Arc<MitmCore>) -> axum::Router {
+    axum::Router::new()
+        .route("/", axum::routing::get(|| async { "julong-codex ok" }))
+        .route(
+            "/{*path}",
+            axum::routing::any(move |request| headless_handler(request, core.clone())),
+        )
 }

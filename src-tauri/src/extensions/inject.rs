@@ -96,14 +96,55 @@ fn inspect_request_fields(data: &Value) -> Vec<&'static str> {
 /// 追加 bridge 到直接字段、messages[].role=system 和 input[].role=system。
 /// 原始 Codex 系统内容始终保留；重复请求不会重复追加 marker 块。
 pub fn inject_system(data: &mut Value, instructions: &str) -> bool {
+    inject_system_for_protocol(data, instructions, false)
+}
+
+pub fn inject_system_for_protocol(data: &mut Value, instructions: &str, anthropic: bool) -> bool {
     let Some(obj) = data.as_object_mut() else {
         return false;
     };
     let mut injected = false;
+    if obj.contains_key("contents") {
+        let parts = obj
+            .entry("systemInstruction")
+            .or_insert_with(|| serde_json::json!({"parts":[]}));
+        if let Some(parts) = parts.get_mut("parts").and_then(Value::as_array_mut) {
+            if !parts.iter().any(|v| {
+                v.get("text")
+                    .and_then(Value::as_str)
+                    .map(|t| t.contains(BRIDGE_START))
+                    .unwrap_or(false)
+            }) {
+                parts.push(serde_json::json!({"text":bridge_block(instructions)}));
+            }
+            return true;
+        }
+    }
+    if obj.get("input").map(Value::is_string).unwrap_or(false) && !obj.contains_key("instructions")
+    {
+        obj.insert("instructions".into(), Value::String(String::new()));
+    }
+    if obj.contains_key("messages") && anthropic && !obj.contains_key("system") {
+        obj.insert("system".into(), Value::String(String::new()));
+    }
 
     for field in ["instructions", "system", "system_prompt", "personality"] {
         if let Some(value) = obj.get_mut(field) {
-            merge_value(value, instructions);
+            if field == "system" && value.is_array() {
+                let items = value.as_array_mut().unwrap();
+                if !items.iter().any(|v| {
+                    v.get("text")
+                        .and_then(Value::as_str)
+                        .map(|t| t.contains(BRIDGE_START))
+                        .unwrap_or(false)
+                }) {
+                    items.push(
+                        serde_json::json!({"type":"text", "text":bridge_block(instructions)}),
+                    );
+                }
+            } else {
+                merge_value(value, instructions);
+            }
             injected = true;
         }
     }
@@ -121,7 +162,7 @@ pub fn inject_system(data: &mut Value, instructions: &str) -> bool {
                 injected = true;
             }
         }
-        if !found {
+        if !found && !anthropic {
             messages.insert(
                 0,
                 serde_json::json!({"role": "system", "content": bridge_block(instructions)}),

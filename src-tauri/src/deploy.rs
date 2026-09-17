@@ -71,6 +71,9 @@ fn home_dir() -> Option<PathBuf> {
 impl DeployManager {
     /// 查找 Codex 配置目录
     pub fn find_codex_home() -> Option<PathBuf> {
+        if let Some(home) = crate::environments::configured_codex_home() {
+            return Some(home);
+        }
         // CODEX_HOME 环境变量
         if let Ok(home) = std::env::var("CODEX_HOME") {
             let p = PathBuf::from(home);

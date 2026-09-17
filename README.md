@@ -334,7 +334,7 @@ shasum -a 256 instruction-packs/gpt-5.6-sol-v45.md instruction-packs/gpt-6-astra
 shasum -a 256 instruction-lab/banks/issue-regression.jsonl instruction-lab/banks/prompt-medium.jsonl
 ```
 
-`v0.2.5` 构建前检查覆盖指令源、66-case/74-turn Issue 库、120-case 双语 medium 库、A/B/C 证据导入、失败样例回流、生产门禁和桌面端/CLI 共用状态。2026-09-13 在 macOS 完成前端语法、Rust 格式、JSON 配置、资源同步和 Rust 测试，结果为 `38 passed; 0 failed`；测试库数量、语言平衡与 SHA-256 均通过。macOS 与 Windows 共用 Rust 门禁实现和只读发布资源；完整 App 打包仍由用户在对应目标环境执行。
+`v0.2.6` 构建前检查覆盖指令源、66-case/74-turn Issue 库、120-case 双语 medium 库、A/B/C 证据导入、失败样例回流、生产门禁和桌面端/CLI 共用状态。2026-09-13 在 macOS 完成前端语法、Rust 格式、JSON 配置、资源同步和 Rust 测试，结果为 `38 passed; 0 failed`；测试库数量、语言平衡与 SHA-256 均通过。macOS 与 Windows 共用 Rust 门禁实现和只读发布资源；完整 App 打包仍由用户在对应目标环境执行。
 
 ### 使用方式
 
@@ -511,3 +511,53 @@ MIT — 见 [LICENSE](LICENSE)
 -------------
 
 打扰了，谢谢看到这里。
+
+### v0.2.6：六环境、模型指令与会话启用
+
+配置管理 → **客户端环境** 支持 Codex / GPT-6 Astra、Claude Code、Grok 4.6、DeepSeek v4.1、GLM 5.3、Gemini。每行可勾选部署，并使用路径后的“自动识别目录”或“手动添加”。路径是已存在的客户端配置目录；识别到多个目录时自行选择。手动路径支持空格和中文，拒绝重复、互相包含及符号链接写入目标。
+
+模型指令可多选不同模型；同一模型只能选择一个版本。六个上游包来自 `3641397194-wq/gpt6-Astra` 的固定提交 `2f75eeacd02bb67008e5a0c28dd52ceb5b8344a2`，来源、文件哈希与 MIT 许可保存在 `instruction-packs/astra/`。原有通用边界、5.6 与 Astra v1 配置仍可选。新包的 SHA-256 检查是导入完整性检查，不冒充指令实验室的远端模型 A/B/C 评测。
+
+使用顺序：
+
+1. 勾选环境、设置目录，并勾选对应模型指令。若没有选择该模型专用包，使用所选通用边界；两者都没有则部署被阻止。
+2. 点击“部署所选环境”，检查预览中的绝对文件路径后确认。仅选中项会写入；取消选择或迁移目录后再次部署，会恢复旧目标的原始文件。
+3. 启动或重启代理，然后在所选环境的“会话验收”对话框中**单独发送 `矩龙`**。本机程序准确返回 **`把每一次交互，变成可控能力`** 才表示当前验收会话已启用。
+4. 客户端真实对话须接入 `http://127.0.0.1:8080`。Codex 沿用现有代理部署；其它客户端需按其 API 配置设置代理地址，保留原有认证。程序支持 Responses、OpenAI Chat Completions、Anthropic Messages 与 Gemini generateContent/streamGenerateContent 消息格式；中转站也必须支持所用协议。
+
+| 环境 | 默认配置目录 | 自动识别环境变量 | 原生接入说明文件 |
+| --- | --- | --- | --- |
+| Codex / GPT-6 Astra | `~/.codex` | `CODEX_HOME`、`CODEX_DIR` | `AGENTS.md`（现有部署另维护 `bridge.md`） |
+| Claude Code | `~/.claude` | `CLAUDE_CONFIG_DIR`、`CLAUDE_HOME` | `CLAUDE.md` |
+| Grok 4.6 | `~/.grok` | `GROK_HOME`、`GROK_DIR` | `AGENTS.md` |
+| DeepSeek v4.1 | `~/.deepseek`、`~/.hermes` | `DEEPSEEK_HOME`、`DEEPSEEK_DIR`、`HERMES_HOME` | `DEEPSEEK.md` |
+| GLM 5.3 | `~/.glm`、`~/.zcode` | `GLM_HOME`、`ZCODE_HOME`、`ZHIPU_HOME` | `GLM.md` |
+| Gemini | `~/.gemini` | `GEMINI_HOME`、`GEMINI_DIR` | `GEMINI.md` |
+
+Windows 使用 `%USERPROFILE%` 解析默认目录；macOS 使用 `$HOME`。`~/.julong-codex/environments.json` 保存桌面和 CLI 共用的选择，可用 `JULONG_HOME` 指定独立状态目录。没有选中 Codex 时，共享供应商/进程状态使用其中的 `control/`，它不表示检测到了 Codex。修改已部署的 Codex 路径或启用状态前先停止代理并还原其配置，避免旧目录残留代理设置。
+
+每个选中目录额外保存 `.julong/connection.json` 与 `.julong/packs/`。原生说明文件不提前释放模型指令，完整指令在程序开关启用后才由代理注入。Grok、DeepSeek、GLM 的客户端加载约定并不统一；应以所用客户端的自定义上下文、API 地址和请求头设置为准。本次不自动修改未知客户端的鉴权或配置格式，也不扩散写入未选择的 Hermes/ZCode 目录。
+
+客户端使用 `x-julong-session: <每个对话唯一的 ID>` 与 `x-julong-environment: codex|claude|grok|deepseek|glm53|gemini` 标识会话。兼容已有 `session_id`、`x-session-id`、`x-codex-session-id` 请求头，以及 `metadata.session_id` / `metadata.user_id`。没有会话标识时不会声称启用成功。会话还按认证信息和环境隔离，空闲 30 分钟过期，最多保存 100 个，代理重启清空；验收对话框的会话与外部客户端会话独立。
+
+口令仅匹配当前用户纯文本消息的完整内容（允许首尾空白）。系统指令、工具输出、附件、引用示例和历史口令不触发启用。回执是**本地程序状态**，不代表远端模型已返回回答，也不代表模型权限改变。未激活请求继续正常转发，但不注入所选词包。
+
+macOS 验证命令（不打包 App）：
+
+```bash
+node scripts/copy-resources.mjs
+node --check frontend/app.js
+node --check frontend/environments.js
+cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+cargo test --manifest-path src-tauri/Cargo.toml
+python3 -m json.tool src-tauri/tauri.conf.json
+cargo build --manifest-path src-tauri/Cargo.toml --bin julong-codex
+./src-tauri/target/debug/julong-codex environment list
+./src-tauri/target/debug/julong-codex environment detect claude
+```
+
+`environment deploy` / `environment restore` 操作所选原生文件；`start` / `stop` / `status` 沿用共享代理生命周期。运行代理时先 `stop` 再还原。部署清单保存原始字节与目标 SHA-256；异常退出的事务可由“恢复事务”恢复。检测到用户在部署后修改文件时会中止覆盖/还原，保留现场。
+
+Windows 目标机同样运行上述 Node / Cargo / Python 检查，CLI 改用 `src-tauri\target\debug\julong-codex.exe`。完整交付仍由 Windows 目标机运行 `build-windows.ps1` / `build-windows.cmd` 生成 NSIS `.exe` 安装程序；macOS 的 `build-windows.sh` 仅用于它声明的交叉编译范围，不能替代 Windows 安装验收。六包通过现有 `copy-resources.mjs` 递归复制，并由 Tauri 既有 `instruction-packs/` 资源映射包含，Rust 中另有编译期嵌入，不依赖安装源目录。
+
+自动验收 `src-tauri/tests/multi_environment.rs` 使用临时目录与本机 HTTP 服务验证六包部署、幂等性、取消选择、路径迁移、逐字节还原、外部修改保护、会话隔离、口令及四种协议。该验证不使用生产 API Key；真实供应商对六种模型的可用性和 Windows 安装体验仍需对应运行环境验证。
