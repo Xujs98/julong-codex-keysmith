@@ -538,7 +538,7 @@ Windows 使用 `%USERPROFILE%` 解析默认目录；macOS 使用 `$HOME`。`~/.j
 
 每个选中目录额外保存 `.julong/connection.json` 与 `.julong/packs/`。原生说明文件不提前释放模型指令，完整指令在程序开关启用后才由代理注入。Grok、DeepSeek、GLM 的客户端加载约定并不统一；应以所用客户端的自定义上下文、API 地址和请求头设置为准。本次不自动修改未知客户端的鉴权或配置格式，也不扩散写入未选择的 Hermes/ZCode 目录。
 
-客户端使用 `x-julong-session: <每个对话唯一的 ID>` 与 `x-julong-environment: codex|claude|grok|deepseek|glm53|gemini` 标识会话。Codex 原生的 `thread-id`、`session-id` 请求头会自动识别，无需手动添加矩龙请求头；同时保留 `session_id`、`x-session-id`、`x-codex-session-id` 以及 `metadata.session_id` / `metadata.user_id` 的兼容。显式 `x-julong-session` 优先；原生头中优先使用 `thread-id`，避免缓存亲和标识相同的不同对话共享启用状态。没有会话标识时不会声称启用成功。会话还按认证信息和环境隔离，空闲 30 分钟过期，最多保存 100 个，代理重启清空；验收对话框的会话与外部客户端会话独立。
+客户端使用 `x-julong-session: <每个对话唯一的 ID>` 与 `x-julong-environment: codex|claude|claude-desktop|grok|deepseek|glm53|gemini` 标识会话。Codex 原生的 `thread-id`、`session-id` 请求头会自动识别，无需手动添加矩龙请求头；同时保留 `session_id`、`x-session-id`、`x-codex-session-id` 以及 `metadata.session_id` / `metadata.user_id` 的兼容。显式 `x-julong-session` 优先；原生头中优先使用 `thread-id`，避免缓存亲和标识相同的不同对话共享启用状态。没有会话标识时不会声称启用成功。会话还按认证信息和环境隔离，空闲 30 分钟过期，最多保存 100 个，代理重启清空；验收对话框的会话与外部客户端会话独立。
 
 口令仅匹配当前用户纯文本消息的完整内容（允许首尾空白）。系统指令、工具输出、附件、引用示例和历史口令不触发启用。回执是**本地程序状态**，不代表远端模型已返回回答，也不代表模型权限改变。未激活请求继续正常转发，但不注入所选词包。
 
@@ -648,3 +648,37 @@ JULONG_CLAUDE_TEST_BIN="$(command -v claude)" cargo test --manifest-path src-tau
 ```
 
 Windows 目标机将 `JULONG_CLAUDE_TEST_BIN` 设为原生 `claude.exe` 完整路径（不是 `.cmd` 包装脚本），再运行相同 Cargo 测试。常规 `cargo test` 默认忽略依赖已安装客户端的附加验收。版本验证记录见 `docs/verification-0.2.9.md`。
+
+### v0.2.10：Claude 供应商分类与 Claude Desktop
+
+供应商新增 **OpenAI / Codex**、**Claude** 两个分类及列表筛选。两类各自选择当前供应商：Claude Code 和 Claude Desktop 共用 Claude 类的 API 地址、Key 和模型；Codex 继续使用 OpenAI / Codex 类。旧数据缺少分类时默认归 OpenAI / Codex，可编辑分类，或复制一条连接作为 Claude 供应商。Claude 请求不会进入 Codex 的故障切换池，也不会改用其默认模型。两类供应商共用本地存储，但使用独立转发目标。
+
+供应商表单的分类按钮与输入框共用右侧内容区：名称、备注并排，官网链接占满一行；窄窗口自动切换为单列，避免输入框挤进标题栏。
+
+使用流程：
+
+1. 在供应商页面选择 **Claude**，添加或编辑供应商，填 API 基础地址、Key，以及 `claude-sonnet-*`、`claude-opus-*` 或 `claude-haiku-*` 默认模型/模型列表。中转站必须支持 **Anthropic Messages**；本项目没有添加 OpenAI→Anthropic 协议转换。
+2. 点击 **验收 Claude 接口（发送一次短请求）**。该操作向填写的供应商发出一次最多 16 输出 token 的真实请求，可能产生少量费用；验证 HTTP 成功及 Messages 响应结构。原有“测试连接”仅检查 `/models`，不能证明推理可用。
+3. 点击该 Claude 供应商的“使用”。在配置管理勾选 **Claude Code**、**Claude Desktop** 或两者，同时选择 **Claude Code / Desktop** 模型指令。
+4. 识别或手动设置客户端配置目录，预览后部署、启动代理，再完整退出并重启 Claude 客户端。Desktop 需要支持第三方网关的版本；本机核对版本为 2.2553.0。
+5. 在真实会话单独发送“矩龙”验收启用，然后继续对话。配置管理中的“会话验收”只验证代理开关，不等同于供应商推理验收。
+
+Claude Code 合并 `settings.json` 的 `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`、模型与各档模型映射，保留权限、hooks 和其它字段；Claude Desktop 按 cc-switch 的 3P 配置机制写入下列文件。两者通过本机代理访问各自选择的 Claude 供应商，Desktop 使用独立 `/claude-desktop` 路径。
+
+| 平台 | Claude Desktop 普通配置目录 | 第三方配置目录 |
+| --- | --- | --- |
+| macOS Intel / Apple Silicon | `~/Library/Application Support/Claude` | 同级 `Claude-3p` |
+| Windows 目标机 | `%LOCALAPPDATA%\Claude`（支持识别 Claude 渠道目录） | 同级 `Claude-3p` 或已存在渠道的 3P 目录 |
+
+手动目录选择 **普通 Claude 配置目录**，不要选择 `.claude`、`Claude-3p` 或 `configLibrary`。自定义识别变量为 `CLAUDE_DESKTOP_CONFIG_DIR`。Windows 使用 LOCALAPPDATA 的第三方配置布局，不把旧 Roaming MCP 配置误当网关 profile。
+
+- 普通目录及第三方目录的 `claude_desktop_config.json`：合并 `deploymentMode: "3p"`，保留 MCP、偏好和其它字段。
+- 第三方目录的 `configLibrary/8197eec6-032a-4a30-a739-a9e438651710.json`：写入矩龙网关 profile，包括供应商 Key、网关地址、认证方式和 Claude 模型列表。
+- 第三方目录的 `configLibrary/_meta.json`：保留其它 profile，登记并选择矩龙 profile。
+- 所选普通目录内的 `JULONG.md`、`.julong/`：接入说明和指令存档；Desktop 实际网关来自以上 JSON 文件。
+
+供应商“使用”、当前连接的 Key/地址/模型编辑，以及类内排序会更新已选且已部署的 Claude 客户端；未部署客户端等待下一次部署。未勾选客户端不修改。供应商切换后应重启 Claude，以加载新模型菜单和配置。运行中的请求由代理使用当前分类的 Key 转发。
+
+所有四份 Desktop 配置纳入同一部署事务和首次字节备份；选择 Claude Desktop 还原时包括同级 3P 目录，不影响未选 Claude Code。已有配置损坏、路径冲突、符号链接或部署后的外部改动会报错，避免覆盖。文件和备份含 API Key，沿用 macOS 私有文件权限与 Windows 用户目录权限。旧六客户端配置自动补入默认未勾选的 Desktop，保留原有选择。
+
+macOS 继续使用 `build-macos.sh` 构建 Intel / Apple Silicon / Universal；Windows 目标机使用 `build-windows.ps1` 或 `build-windows.cmd` 生成 NSIS EXE 安装包。`build-windows.sh` 在 macOS 上仅负责其声明的交叉编译范围。本次代码编译进现有核心，没有新增打包资源或脚本，不自动重打包 App。检查及验证范围见 [v0.2.10 验证记录](docs/verification-0.2.10.md)。

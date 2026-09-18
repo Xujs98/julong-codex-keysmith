@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>矩龙破甲 · v0.2.9</title>
+    <title>矩龙破甲 · v0.2.10</title>
     <link rel="stylesheet" href="styles.css">
     <script type="module" src="app.js"></script>
 </head>
@@ -14,7 +14,7 @@
     <div class="tb-logo" data-tauri-drag-region>
         <img class="tb-logo-image" src="assets/molong-logo.png" alt="矩龙破甲" data-tauri-drag-region>
         <span class="tb-logo-text" data-tauri-drag-region>矩龙破甲</span>
-        <span class="tb-logo-sub" data-tauri-drag-region>Desktop Edition · v0.2.9</span>
+        <span class="tb-logo-sub" data-tauri-drag-region>Desktop Edition · v0.2.10</span>
     </div>
     <div class="tb-spacer" data-tauri-drag-region></div>
     <button class="tb-btn" id="tb-minimize" title="最小化">—</button>
@@ -230,7 +230,7 @@
             <div class="dash-pad">
                 <section class="hero-card">
                     <div class="hero-copy">
-                        <div class="eyebrow">矩龙破甲 · v0.2.9</div>
+                        <div class="eyebrow">矩龙破甲 · v0.2.10</div>
                         <h1>把每一次交互，<span>变成可控能力。</span></h1>
                         <p>本地代理、指令增强与 Skills 工作流集中管理。数据留在本机，状态一目了然。</p>
                         <div class="hero-actions">
@@ -305,7 +305,7 @@
             <div class="config-scroll">
                 <div class="cfg-block">
                     <div class="cfg-block-head">客户端环境</div>
-                    <p class="cfg-block-hint">勾选要部署或还原的客户端；部署时同时选择模型指令。安装路径指客户端配置目录。</p>
+                    <p class="cfg-block-hint">勾选要部署或还原的客户端；部署时同时选择模型指令。目录为客户端配置目录；Claude Desktop 与 Claude Code 共用 Claude 模型指令。</p>
                     <div class="environment-grid" id="environment-grid" aria-label="客户端环境"></div>
                     <p class="cfg-block-hint" id="environment-note" role="status" aria-live="polite">读取环境中…</p>
                 </div>
@@ -450,7 +450,12 @@
 
         <div class="main-content" id="page-providers">
             <div class="providers-scroll">
-                <div class="provider-summary"><div><strong id="provider-summary-title">供应商列表</strong><span id="provider-summary-sub">拖拽卡片调整优先级，当前供应商自动置顶</span></div><span class="provider-runtime" id="provider-runtime">代理未运行</span></div>
+                <div class="provider-summary"><div><strong id="provider-summary-title">供应商列表</strong><span id="provider-summary-sub">两类供应商独立选择；Claude Code 与 Desktop 共用 Claude 分类</span></div><span class="provider-runtime" id="provider-runtime">代理未运行</span></div>
+                <div class="provider-categories" role="group" aria-label="供应商分类筛选">
+                    <button class="btn" type="button" data-provider-filter="all" aria-pressed="true">全部</button>
+                    <button class="btn" type="button" data-provider-filter="openai" aria-pressed="false">OpenAI / Codex</button>
+                    <button class="btn" type="button" data-provider-filter="claude" aria-pressed="false">Claude</button>
+                </div>
                 <div class="providers-list" id="providers-list"><div class="log-empty">加载中…</div></div>
             </div>
         </div>
@@ -494,7 +499,7 @@
                 <div>
                     <div class="modal-eyebrow">PROVIDER WORKSPACE</div>
                     <div class="provider-modal-title" id="provider-modal-title">添加供应商</div>
-                    <p class="provider-modal-subtitle">接入 OpenAI 兼容服务，统一管理连接、模型与故障切换顺序。</p>
+                    <p class="provider-modal-subtitle">接入 OpenAI / Anthropic 兼容服务，统一管理连接、模型与故障切换顺序。</p>
                 </div>
             </div>
             <button class="provider-modal-close" id="provider-modal-close" type="button" title="关闭" aria-label="关闭弹窗">×</button>
@@ -504,16 +509,21 @@
             <section class="provider-form-section">
                 <div class="provider-section-head"><span>01</span><div><strong>基础信息</strong><small>用于识别和管理这条连接</small></div></div>
                 <div class="provider-form-grid">
+                    <input type="hidden" id="provider-category" value="openai">
+                    <div class="provider-categories field-span-2" role="radiogroup" aria-label="供应商分类">
+                        <button class="btn" type="button" role="radio" data-provider-category="openai" aria-checked="true" tabindex="0">OpenAI / Codex</button>
+                        <button class="btn" type="button" role="radio" data-provider-category="claude" aria-checked="false" tabindex="-1">Claude</button>
+                    </div>
                     <label class="field">供应商名称<span class="field-hint">必填</span><span class="field-control"><span class="field-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 20V8l8-4 8 4v12"/><path d="M9 20v-5h6v5M8 10h.01M12 10h.01M16 10h.01"/></svg></span><input id="provider-name" class="cfg-input" placeholder="例如：主力供应商" autocomplete="off"></span></label>
                     <label class="field">备注<span class="field-hint">可选</span><span class="field-control"><span class="field-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></span><input id="provider-note" class="cfg-input" placeholder="例如：主力线路" autocomplete="off"></span></label>
                     <label class="field field-span-2">官网链接<span class="field-hint">可选，用于记录服务商入口</span><span class="field-control"><span class="field-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg></span><input id="provider-official-url" class="cfg-input" placeholder="https://provider.example.com" inputmode="url"></span></label>
                 </div>
             </section>
             <section class="provider-form-section">
-                <div class="provider-section-head"><span>02</span><div><strong>连接配置</strong><small>凭据仅写入本机 Codex 配置目录</small></div></div>
+                <div class="provider-section-head"><span>02</span><div><strong>连接配置</strong><small>凭据保存在本机；按分类写入已选客户端</small></div></div>
                 <div class="provider-form-grid">
                     <label class="field field-span-2">API Key<span class="field-hint">服务商提供的访问密钥</span><span class="field-control"><span class="field-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 8-8M16 7l2 2M14 9l2 2"/></svg></span><input id="provider-api-key" class="cfg-input" type="password" placeholder="sk-..." autocomplete="off"><button class="field-control-action" id="provider-key-toggle" type="button" title="显示 API Key" aria-label="显示 API Key"><svg class="eye-open" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg><svg class="eye-closed" viewBox="0 0 24 24" aria-hidden="true"><path d="m4 4 16 16M10.6 6.2A10 10 0 0 1 12 6c6 0 9.5 6 9.5 6a16 16 0 0 1-2.1 2.7M7.2 7.2C4.2 9 2.5 12 2.5 12s3.5 6 9.5 6a9 9 0 0 0 3-.5M10 10a3 3 0 0 0 4 4"/></svg></button></span></label>
-                    <label class="field field-span-2">API 请求地址<div class="field-inline-label"><span class="field-hint">OpenAI 兼容的 Responses API 地址</span><span class="switch-control"><input id="provider-full-url" type="checkbox"><span class="switch-track"></span><b>完整 URL</b></span></div><span class="field-control"><span class="field-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 12h8M12 8v8"/><circle cx="12" cy="12" r="4"/><circle cx="5" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="m6.5 6.5 2.7 2.7M17.5 6.5l-2.7 2.7M6.5 17.5l2.7-2.7M17.5 17.5l-2.7-2.7"/></svg></span><input id="provider-request-url" class="cfg-input" placeholder="https://api.example.com/v1" inputmode="url"></span></label>
+                    <label class="field field-span-2">API 请求地址<div class="field-inline-label"><span class="field-hint" id="provider-api-hint">OpenAI 兼容的 Responses API 地址</span><span class="switch-control"><input id="provider-full-url" type="checkbox"><span class="switch-track"></span><b>完整 URL</b></span></div><span class="field-control"><span class="field-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 12h8M12 8v8"/><circle cx="12" cy="12" r="4"/><circle cx="5" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="m6.5 6.5 2.7 2.7M17.5 6.5l-2.7 2.7M6.5 17.5l2.7-2.7M17.5 17.5l-2.7-2.7"/></svg></span><input id="provider-request-url" class="cfg-input" placeholder="https://api.example.com/v1" inputmode="url"></span></label>
                 </div>
             </section>
             <section class="provider-form-section provider-model-section">
@@ -524,7 +534,9 @@
                 </div>
             </section>
         </div>
-        <div class="cfg-msg" id="provider-modal-message"></div>
+        <p class="provider-modal-subtitle" id="provider-claude-hint" hidden>Claude Code / Desktop 需要 Anthropic Messages 接口及 Claude 模型。默认模型或下载列表须包含 claude-sonnet-*、claude-opus-* 或 claude-haiku-*。部署及切换会同步已选且已部署的 Claude 客户端。</p>
+        <button class="btn" id="btn-provider-claude-test" type="button" hidden>验收 Claude 接口（发送一次短请求）</button>
+        <div class="cfg-msg" id="provider-modal-message" role="status" aria-live="polite"></div>
         <div class="provider-modal-footer"><button class="btn provider-cancel" id="provider-modal-cancel">取消</button><button class="btn btn-red solid provider-save" id="provider-modal-save">保存供应商</button></div>
     </div>
 </div>

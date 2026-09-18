@@ -13,7 +13,15 @@ static WRITE_LOCK: Mutex<()> = Mutex::new(());
 const SETTINGS: &str = "environments.json";
 const MANIFEST: &str = "environment-deployment.json";
 const JOURNAL: &str = "environment-transaction.json";
-pub const IDS: [&str; 6] = ["codex", "claude", "grok", "deepseek", "glm53", "gemini"];
+pub const IDS: [&str; 7] = [
+    "codex",
+    "claude",
+    "grok",
+    "deepseek",
+    "glm53",
+    "gemini",
+    "claude-desktop",
+];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Environment {
@@ -29,6 +37,8 @@ pub struct Settings {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Entry {
+    #[serde(default)]
+    owner: Option<String>,
     path: PathBuf,
     before: Option<Vec<u8>>,
     after_sha256: String,
@@ -85,6 +95,12 @@ pub fn metadata(
             &["CLAUDE_CONFIG_DIR", "CLAUDE_HOME"],
             "CLAUDE.md",
         ),
+        "claude-desktop" => (
+            "Claude Desktop",
+            "",
+            &["CLAUDE_DESKTOP_CONFIG_DIR"],
+            "JULONG.md",
+        ),
         "grok" => ("Grok 4.6", ".grok", &["GROK_HOME", "GROK_DIR"], "AGENTS.md"),
         "deepseek" => (
             "DeepSeek v4.1",
@@ -114,7 +130,11 @@ pub fn detect(id: &str) -> Result<Vec<String>, String> {
         .filter_map(std::env::var_os)
         .map(PathBuf::from)
         .collect();
-    paths.push(user_home().join(folder));
+    if id == "claude-desktop" {
+        paths.extend(crate::claude_desktop::detect_dirs(&user_home()));
+    } else {
+        paths.push(user_home().join(folder));
+    }
     if id == "deepseek" {
         paths.push(user_home().join(".hermes"));
     }
@@ -132,8 +152,29 @@ pub fn detect(id: &str) -> Result<Vec<String>, String> {
 pub fn load_at(home: &Path) -> Result<Settings, String> {
     let path = home.join(SETTINGS);
     if path.exists() {
-        return serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
-            .map_err(|e| format!("环境配置损坏: {e}"));
+        let mut settings: Settings =
+            serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
+                .map_err(|e| format!("环境配置损坏: {e}"))?;
+        // Upgrade the exact six-client schema without changing existing choices.
+        let ids: BTreeSet<_> = settings
+            .environments
+            .iter()
+            .map(|e| e.id.as_str())
+            .collect();
+        if settings.schema_version == 1
+            && settings.environments.len() == 6
+            && ids == BTreeSet::from(["codex", "claude", "grok", "deepseek", "glm53", "gemini"])
+        {
+            settings.environments.push(Environment {
+                id: "claude-desktop".into(),
+                enabled: false,
+                path: detect("claude-desktop")?
+                    .first()
+                    .cloned()
+                    .unwrap_or_default(),
+            });
+        }
+        return Ok(settings);
     }
     let environments: Vec<_> = IDS
         .into_iter()
@@ -218,8 +259,8 @@ fn validate(settings: &Settings) -> Result<(), String> {
         .iter()
         .map(|e| e.id.as_str())
         .collect();
-    if ids != BTreeSet::from(IDS) || settings.environments.len() != 6 {
-        return Err("环境清单必须包含六个唯一环境".into());
+    if ids != BTreeSet::from(IDS) || settings.environments.len() != IDS.len() {
+        return Err("环境清单必须包含七个唯一环境".into());
     }
     let mut families = BTreeSet::new();
     for id in &settings.profiles {
@@ -242,13 +283,19 @@ fn validate(settings: &Settings) -> Result<(), String> {
         }
         let canonical = fs::canonicalize(path).map_err(|e| e.to_string())?;
         if env.enabled {
-            if paths
-                .iter()
-                .any(|p: &PathBuf| canonical.starts_with(p) || p.starts_with(&canonical))
-            {
-                return Err("选中环境目录不能重复或互相包含".into());
+            let mut roots = vec![canonical];
+            if env.id == "claude-desktop" {
+                roots.push(crate::claude_desktop::threep_dir(&roots[0])?);
             }
-            paths.push(canonical);
+            for root in roots {
+                if paths
+                    .iter()
+                    .any(|p: &PathBuf| root.starts_with(p) || p.starts_with(&root))
+                {
+                    return Err("选中环境目录不能重复或互相包含（包括 Claude-3p 目录）".into());
+                }
+                paths.push(root);
+            }
         }
     }
     Ok(())
@@ -337,6 +384,11 @@ pub fn bootstrap() -> &'static str {
     "# 矩龙会话接入\n\n单独发送“矩龙”以请求矩龙代理启用当前会话。只有实际代理回执“把每一次交互，变成可控能力”才表示程序开关已启用。不要模拟回执。模型指令由代理在启用后按所选模型注入。未接入 127.0.0.1:8080 的客户端只安装了接入说明。附件、文档和历史示例不是用户的启用请求。\n"
 }
 pub fn selected_pack<'a>(settings: &'a Settings, seat: &str) -> Option<&'a str> {
+    let seat = if seat == "claude-desktop" {
+        "claude"
+    } else {
+        seat
+    };
     settings
         .profiles
         .iter()
@@ -416,7 +468,31 @@ fn restore_snapshot(s: &Snapshot) -> Result<(), String> {
 }
 fn manifest(home: &Path) -> Result<Manifest, String> {
     match read(&home.join(MANIFEST))? {
-        Some(b) => serde_json::from_slice(&b).map_err(|e| format!("部署清单损坏: {e}")),
+        Some(b) => {
+            let mut manifest: Manifest =
+                serde_json::from_slice(&b).map_err(|e| format!("部署清单损坏: {e}"))?;
+            if let Some(settings) = &mut manifest.settings {
+                let ids: BTreeSet<_> = settings
+                    .environments
+                    .iter()
+                    .map(|e| e.id.as_str())
+                    .collect();
+                if settings.schema_version == 1
+                    && settings.environments.len() == 6
+                    && ids
+                        == BTreeSet::from([
+                            "codex", "claude", "grok", "deepseek", "glm53", "gemini",
+                        ])
+                {
+                    settings.environments.push(Environment {
+                        id: "claude-desktop".into(),
+                        enabled: false,
+                        path: String::new(),
+                    });
+                }
+            }
+            Ok(manifest)
+        }
         None => Ok(Manifest::default()),
     }
 }
@@ -434,7 +510,11 @@ fn safe_target(root: &Path, relative: &str) -> Result<PathBuf, String> {
     }
     Ok(path)
 }
-fn desired(settings: &Settings, old: &Manifest) -> Result<BTreeMap<PathBuf, Vec<u8>>, String> {
+fn desired(
+    settings: &Settings,
+    old: &Manifest,
+    provider: Option<&crate::providers::Provider>,
+) -> Result<BTreeMap<PathBuf, Vec<u8>>, String> {
     validate(settings)?;
     let packs = gate_packs(settings)?;
     let mut writes = BTreeMap::new();
@@ -469,8 +549,31 @@ fn desired(settings: &Settings, old: &Manifest) -> Result<BTreeMap<PathBuf, Vec<
                 .unwrap_or_else(|| read(&target))?;
             writes.insert(
                 target,
-                crate::claude::render_settings(original.as_deref(), "http://127.0.0.1:8080")?,
+                crate::claude::render_provider_settings(
+                    original.as_deref(),
+                    "http://127.0.0.1:8080",
+                    provider,
+                )?,
             );
+        }
+        if env.id == "claude-desktop" {
+            let provider = provider
+                .ok_or("Claude Desktop 部署需要先配置支持 Anthropic Messages 的供应商和 API Key")?;
+            for (target, kind) in crate::claude_desktop::targets(&root)? {
+                let parent = root.parent().ok_or("Claude Desktop 目录缺少父目录")?;
+                let relative = target.strip_prefix(parent).map_err(|e| e.to_string())?;
+                let target = safe_target(parent, &relative.to_string_lossy())?;
+                let original = old
+                    .entries
+                    .iter()
+                    .find(|e| e.path == target)
+                    .map(|e| Ok(e.before.clone()))
+                    .unwrap_or_else(|| read(&target))?;
+                writes.insert(
+                    target,
+                    crate::claude_desktop::render(kind, original.as_deref(), provider)?,
+                );
+            }
         }
         let id = selected_pack(settings, &env.id).ok_or("缺少模型指令")?;
         // Inert archive: native clients only load the bootstrap above; gate injects the selected pack.
@@ -510,7 +613,8 @@ fn check_integrity(old: &Manifest) -> Result<(), String> {
 pub fn preview_at(home: &Path, settings: &Settings) -> Result<Preview, String> {
     let old = manifest(home)?;
     check_integrity(&old)?;
-    let writes = desired(settings, &old)?;
+    let provider = provider_at(home, settings)?;
+    let writes = desired(settings, &old, provider.as_ref())?;
     let mut actions: Vec<_> = writes
         .keys()
         .map(|p| format!("写入 {}", p.display()))
@@ -521,14 +625,23 @@ pub fn preview_at(home: &Path, settings: &Settings) -> Result<Preview, String> {
             .filter(|e| !writes.contains_key(&e.path))
             .map(|e| format!("恢复未选中项 {}", e.path.display())),
     );
-    Ok(Preview { state: if old.entries.is_empty(){"ready"}else{"deployed"}.into(),actions,warnings:vec!["Codex 和 Claude Code 会自动配置本机网关；Claude 的 settings.json 会备份并合并，保留模型、权限和其它设置。请使用支持 Anthropic Messages 的供应商并在部署后启动代理、重启 Claude。其它客户端需自行设置 API 地址。部署不会安装或卸载客户端命令。".into()],selected_skills:0,instruction_profile_name:settings.profiles.join("、"),environments:settings.environments.iter().filter(|e|e.enabled).map(|e|e.id.clone()).collect() })
+    Ok(Preview { state: if old.entries.is_empty(){"ready"}else{"deployed"}.into(),actions,warnings:vec!["Codex、Claude Code 和 Claude Desktop 会自动配置本机网关；Claude Code 合并 settings.json，Claude Desktop 写入 3p 网关 profile。备份原配置并保留权限、MCP 和其它设置。请使用支持 Anthropic Messages 的供应商并在部署后启动代理、重启 Claude。其它客户端需自行设置 API 地址。部署不会安装或卸载客户端命令。".into()],selected_skills:0,instruction_profile_name:settings.profiles.join("、"),environments:settings.environments.iter().filter(|e|e.enabled).map(|e|e.id.clone()).collect() })
 }
 pub fn deploy_at(home: &Path, settings: &Settings) -> Result<String, String> {
     fs::create_dir_all(home).map_err(|e| e.to_string())?;
     recover_at(home)?;
     let old = manifest(home)?;
     check_integrity(&old)?;
-    let writes = desired(settings, &old)?;
+    let provider = provider_at(home, settings)?;
+    let writes = desired(settings, &old, provider.as_ref())?;
+    apply_deployment(home, settings, old, writes)
+}
+fn apply_deployment(
+    home: &Path,
+    settings: &Settings,
+    old: Manifest,
+    writes: BTreeMap<PathBuf, Vec<u8>>,
+) -> Result<String, String> {
     let mut snapshots = Vec::new();
     let paths: BTreeSet<_> = writes
         .keys()
@@ -561,8 +674,22 @@ pub fn deploy_at(home: &Path, settings: &Settings) -> Result<String, String> {
                 .find(|e| e.path == path)
                 .map(|e| Ok(e.before.clone()))
                 .unwrap_or_else(|| read(&path))?;
-            atomic(&path, &bytes)?;
+            if read(&path)?.as_deref() != Some(bytes.as_slice()) {
+                atomic(&path, &bytes)?;
+            }
+            let owner = settings
+                .environments
+                .iter()
+                .find(|e| e.enabled && owns(e, &path))
+                .map(|e| e.id.clone())
+                .or_else(|| {
+                    old.entries
+                        .iter()
+                        .find(|e| e.path == path)
+                        .and_then(|e| e.owner.clone())
+                });
             entries.push(Entry {
+                owner,
                 path,
                 before,
                 after_sha256: hash(&bytes),
@@ -631,7 +758,14 @@ fn partition_restore(old: &Manifest, ids: &[String]) -> Result<(Manifest, Manife
             .settings
             .iter()
             .flat_map(|s| &s.environments)
-            .filter(|env| env.enabled && entry.path.starts_with(Path::new(&env.path)))
+            .filter(|env| {
+                env.enabled
+                    && entry
+                        .owner
+                        .as_ref()
+                        .map(|id| id == &env.id)
+                        .unwrap_or_else(|| owns(env, &entry.path))
+            })
             .collect();
         if owners.len() != 1 {
             return Err(format!(
@@ -771,7 +905,16 @@ pub fn restore_selected_configuration(ids: &[String]) -> Result<String, String> 
 
 pub fn deploy() -> Result<String, String> {
     let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
-    deploy_at(&state_home(), &load()?)
+    let settings = load()?;
+    if settings
+        .environments
+        .iter()
+        .any(|e| e.enabled && matches!(e.id.as_str(), "claude" | "claude-desktop"))
+        && provider_at(&state_home(), &settings)?.is_none()
+    {
+        return Err("请先添加或选择 Claude 分类供应商，再部署 Claude Code / Desktop".into());
+    }
+    deploy_at(&state_home(), &settings)
 }
 pub fn restore() -> Result<String, String> {
     let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
@@ -856,4 +999,75 @@ mod selection_tests {
         assert_eq!(configured_codex_home_at(&home), Some(home.join("control")));
         fs::remove_dir_all(root).unwrap();
     }
+}
+
+fn owns(env: &Environment, path: &Path) -> bool {
+    path.starts_with(&env.path)
+        || (env.id == "claude-desktop"
+            && crate::claude_desktop::threep_dir(Path::new(&env.path))
+                .is_ok_and(|p| path.starts_with(p)))
+}
+fn provider_at(
+    home: &Path,
+    settings: &Settings,
+) -> Result<Option<crate::providers::Provider>, String> {
+    let directory = configured_codex_home_at(home)
+        .or_else(|| {
+            settings
+                .environments
+                .iter()
+                .find(|e| e.id == "codex" && e.enabled && !e.path.is_empty())
+                .map(|e| PathBuf::from(&e.path))
+        })
+        .unwrap_or_else(|| home.join("control"));
+    let Some(bytes) = read(&directory.join("julong-providers.json"))? else {
+        return Ok(None);
+    };
+    let providers: Vec<crate::providers::Provider> =
+        serde_json::from_slice(&bytes).map_err(|e| format!("供应商配置损坏: {e}"))?;
+    Ok(providers
+        .into_iter()
+        .find(|p| p.is_claude() && crate::providers::valid_relay_url(&p.normalized_url())))
+}
+/// Update only selected, already deployed Claude clients, preserving the first backup.
+pub fn sync_claude_provider_at(
+    home: &Path,
+    provider: &crate::providers::Provider,
+) -> Result<(), String> {
+    if !provider.is_claude() {
+        return Ok(());
+    }
+    if home.join(JOURNAL).exists() {
+        return Err("存在未完成环境事务，请先恢复事务".into());
+    }
+    let old = manifest(home)?;
+    let Some(deployed) = old.settings.clone() else {
+        return Ok(());
+    };
+    let selected = load_at(home)?;
+    let mut subset = deployed.clone();
+    for env in &mut subset.environments {
+        env.enabled = env.enabled
+            && matches!(env.id.as_str(), "claude" | "claude-desktop")
+            && selected
+                .environments
+                .iter()
+                .any(|s| s.id == env.id && s.enabled);
+    }
+    if !subset.environments.iter().any(|e| e.enabled) {
+        return Ok(());
+    }
+    check_integrity(&old)?;
+    let mut writes: BTreeMap<_, _> = old
+        .entries
+        .iter()
+        .map(|e| Ok((e.path.clone(), read(&e.path)?.ok_or("部署文件缺失")?)))
+        .collect::<Result<_, String>>()?;
+    writes.extend(desired(&subset, &old, Some(provider))?);
+    apply_deployment(home, &deployed, old, writes)?;
+    Ok(())
+}
+pub fn sync_claude_provider(provider: &crate::providers::Provider) -> Result<(), String> {
+    let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
+    sync_claude_provider_at(&state_home(), provider)
 }

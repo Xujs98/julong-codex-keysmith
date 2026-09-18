@@ -111,7 +111,7 @@
                     const settings = settingsCopy(); settings.environments.find(e => e.id === env.id).enabled = !env.enabled;
                     try { await save(settings); } catch (e) { message(String(e)); }
                 });
-                heading.append(toggle, node('strong', env.name), node('small', env.deployed ? (env.id === 'claude' ? '配置与指令已部署' : '指令已部署') : env.detected ? '目录已识别' : '未识别目录'));
+                heading.append(toggle, node('strong', env.name), node('small', env.deployed ? (['claude', 'claude-desktop'].includes(env.id) ? '配置与指令已部署' : '指令已部署') : env.detected ? '目录已识别' : '未识别目录'));
                 const pathRow = node('div', undefined, 'environment-path');
                 const path = node('span', env.path || '尚未添加配置目录'); path.title = env.path;
                 pathRow.append(node('small', '配置目录'), path);
@@ -121,6 +121,7 @@
                 }
                 card.append(heading, pathRow, actions);
                 if (env.id === 'claude') card.append(node('small', '部署会备份并写入 settings.json；启动代理后重启 Claude。此目录不是 claude 命令的安装目录。'));
+                if (env.id === 'claude-desktop') card.append(node('small', '部署会备份 Claude 与 Claude-3p 配置，写入供应商 Key 和模型。选择普通 Claude 配置目录；启动代理后完整退出并重启 Claude Desktop。与 Claude Code 共用 Claude 模型指令。'));
                 grid.append(card);
             }
             if (focused) grid.querySelector(`[data-environment="${focused}"] .environment-check`)?.focus();

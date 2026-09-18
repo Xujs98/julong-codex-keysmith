@@ -1,5 +1,6 @@
 pub mod activation;
 pub mod claude;
+pub mod claude_desktop;
 pub mod environments;
 pub mod upstream;
 // Super-Instruct — Tauri 桌面应用入口
@@ -242,6 +243,7 @@ pub fn run() {
             use_provider,
             reorder_providers,
             test_provider,
+            test_claude_provider,
             fetch_provider_models,
             get_provider_runtime_status,
             get_mcp_tools,
@@ -429,13 +431,8 @@ async fn start_proxy(
     // 6. 构建 MitmCore
     let core = match MitmCore::builder()
         .target(&relay_url)
-        .anthropic_api_key(
-            provider_runtime
-                .providers
-                .iter()
-                .find(|p| providers::valid_relay_url(&p.normalized_url()))
-                .map(|p| p.api_key.clone()),
-        )
+        .openai_provider(provider_runtime.providers.first())
+        .claude_provider(providers::selected_claude_at(manager.codex_home())?.as_ref())
         .activation_gate(activation::ActivationGate::deployed()?)
         .response_parser(UniversalSseParser)
         .response_interceptor(tamper)
@@ -1050,8 +1047,82 @@ fn list_providers() -> Result<Vec<providers::Provider>, String> {
 }
 
 #[tauri::command]
-fn save_provider(provider: providers::Provider) -> Result<Vec<providers::Provider>, String> {
-    providers::save(provider)
+async fn save_provider(
+    provider: providers::Provider,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<providers::Provider>, String> {
+    let list = providers::list()?;
+    let previous = list.iter().find(|p| p.id == provider.id);
+    let changed = previous.is_some_and(|p| {
+        p.category != provider.category
+            || p.api_key != provider.api_key
+            || p.request_url != provider.request_url
+            || p.full_url != provider.full_url
+            || p.default_model != provider.default_model
+            || p.models != provider.models
+    });
+    let mut predicted = list.clone();
+    if let Some(item) = predicted.iter_mut().find(|p| p.id == provider.id) {
+        *item = provider.clone();
+    } else {
+        predicted.push(provider.clone());
+    }
+    let before_claude = list.iter().find(|p| p.is_claude());
+    let after_claude = predicted.iter().find(|p| p.is_claude());
+    if let Some(next) = after_claude {
+        if before_claude.map(|p| &p.id) != Some(&next.id) || (changed && next.id == provider.id) {
+            environments::sync_claude_provider(next)?;
+        }
+    }
+    if state.core.read().await.is_some() {
+        let before_openai = list.iter().find(|p| !p.is_claude());
+        if let Some(next) = predicted.iter().find(|p| !p.is_claude()) {
+            if before_openai.map(|p| &p.id) != Some(&next.id) || (changed && next.id == provider.id)
+            {
+                providers::activate(next, true)?;
+            }
+        }
+    }
+    let saved = providers::save(provider.clone())?;
+    if changed || previous.is_none() {
+        refresh_provider_categories(&state, &saved).await?;
+    }
+    Ok(saved)
+}
+
+async fn refresh_provider_categories(
+    state: &AppState,
+    list: &[providers::Provider],
+) -> Result<(), String> {
+    if let Some(runtime) = state.providers.read().await.as_ref() {
+        let mut rt = runtime.write().await;
+        let current = rt.current().map(|p| p.id.clone());
+        rt.providers = list.iter().filter(|p| !p.is_claude()).cloned().collect();
+        rt.current_index = current
+            .and_then(|id| rt.providers.iter().position(|p| p.id == id))
+            .unwrap_or(0);
+        rt.clear_model_fallbacks();
+        if let Some(core) = state.core.read().await.as_ref() {
+            if let Some(p) = rt.current() {
+                core.update_category(p).await;
+            } else {
+                core.clear_openai_provider().await;
+            }
+        }
+    }
+    if let Some(core) = state.core.read().await.as_ref() {
+        if let Some(p) = list.iter().find(|p| p.is_claude()) {
+            core.update_category(p).await;
+        } else {
+            core.clear_claude_provider().await;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn test_claude_provider(provider: providers::Provider) -> Result<String, String> {
+    providers::test_claude(&provider).await
 }
 
 #[tauri::command]
@@ -1059,32 +1130,28 @@ async fn delete_provider(
     id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<providers::Provider>, String> {
+    let before = providers::list()?;
+    if let Some(deleted) = before.iter().find(|p| p.id == id) {
+        if before
+            .iter()
+            .find(|p| p.is_claude() == deleted.is_claude())
+            .map(|p| &p.id)
+            == Some(&id)
+        {
+            if let Some(next) = before
+                .iter()
+                .find(|p| p.id != id && p.is_claude() == deleted.is_claude())
+            {
+                if next.is_claude() {
+                    environments::sync_claude_provider(next)?;
+                } else if state.core.read().await.is_some() {
+                    providers::activate(next, true)?;
+                }
+            }
+        }
+    }
     let list = providers::delete(&id)?;
-    let mut next_provider = None;
-
-    if let Some(runtime) = state.providers.read().await.as_ref() {
-        let mut runtime = runtime.write().await;
-        let previous_current = runtime.current().map(|provider| provider.id.clone());
-        runtime.providers = list.clone();
-        runtime.clear_model_fallbacks();
-        runtime.current_index = previous_current
-            .as_ref()
-            .and_then(|current| list.iter().position(|provider| &provider.id == current))
-            .unwrap_or(0);
-
-        if previous_current.as_deref() == Some(id.as_str()) {
-            next_provider = runtime.current().cloned();
-        }
-    }
-
-    if let Some(provider) = next_provider {
-        providers::activate(&provider, true)?;
-        if let Some(core) = state.core.read().await.as_ref() {
-            core.set_provider(provider.normalized_url(), &provider.api_key)
-                .await;
-        }
-    }
-
+    refresh_provider_categories(&state, &list).await?;
     Ok(list)
 }
 
@@ -1094,33 +1161,64 @@ async fn use_provider(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<providers::Provider>, String> {
     let list = providers::list()?;
+    let provider = list.iter().find(|p| p.id == id).ok_or("供应商不存在")?;
+    if provider.is_claude() {
+        environments::sync_claude_provider(provider)?;
+    } else if state.core.read().await.is_some() {
+        providers::activate(provider, true)?;
+    }
     let mut ids = vec![id.clone()];
     ids.extend(list.iter().filter(|p| p.id != id).map(|p| p.id.clone()));
     let ordered = providers::reorder(&ids)?;
-    if let Some(provider) = ordered.first() {
-        let running = state.core.read().await.is_some();
-        // 停止状态下只调整供应商优先级；config.toml/auth.json 的落盘统一
-        // 延迟到“启动代理”路径，避免打开应用或点“使用”就改写 Codex 文件。
-        if running {
-            providers::activate(provider, true)?;
-        }
+    if !provider.is_claude() {
         if let Some(runtime) = state.providers.read().await.as_ref() {
             let mut rt = runtime.write().await;
-            rt.providers = ordered.clone();
+            rt.providers = ordered.iter().filter(|p| !p.is_claude()).cloned().collect();
             rt.current_index = 0;
-            rt.clear_model_fallbacks();
-        }
-        if let Some(core) = state.core.read().await.as_ref() {
-            core.set_provider(provider.normalized_url(), &provider.api_key)
-                .await;
         }
     }
+    refresh_provider_categories(&state, &ordered).await?;
     Ok(ordered)
 }
 
 #[tauri::command]
-fn reorder_providers(ids: Vec<String>) -> Result<Vec<providers::Provider>, String> {
-    providers::reorder(&ids)
+async fn reorder_providers(
+    ids: Vec<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<providers::Provider>, String> {
+    let list = providers::list()?;
+    let mut seen = std::collections::BTreeSet::new();
+    if ids.len() != list.len()
+        || ids
+            .iter()
+            .any(|id| !seen.insert(id) || !list.iter().any(|p| &p.id == id))
+    {
+        return Err("供应商排序必须包含全部唯一 ID".into());
+    }
+    let next: Vec<_> = ids
+        .iter()
+        .filter_map(|id| list.iter().find(|p| &p.id == id))
+        .collect();
+    for category in [false, true] {
+        let before = list.iter().find(|p| p.is_claude() == category);
+        if let Some(after) = next.iter().find(|p| p.is_claude() == category) {
+            if before.map(|p| &p.id) != Some(&after.id) {
+                if category {
+                    environments::sync_claude_provider(after)?;
+                } else if state.core.read().await.is_some() {
+                    providers::activate(after, true)?;
+                }
+            }
+        }
+    }
+    let ordered = providers::reorder(&ids)?;
+    if let Some(rt) = state.providers.read().await.as_ref() {
+        let mut rt = rt.write().await;
+        rt.providers = ordered.iter().filter(|p| !p.is_claude()).cloned().collect();
+        rt.current_index = 0;
+    }
+    refresh_provider_categories(&state, &ordered).await?;
+    Ok(ordered)
 }
 
 #[tauri::command]
@@ -1414,8 +1512,16 @@ async fn switch_provider(
     };
     if let Some(provider) = next {
         let url = provider.normalized_url();
-        core.set_provider(url.clone(), &provider.api_key).await;
-        let _ = providers::activate(&provider, true);
+        if let Err(error) = providers::activate(&provider, true) {
+            tracing::warn!("provider switch configuration failed: {error}");
+            let mut runtime = providers.write().await;
+            runtime.current_index =
+                (runtime.current_index + runtime.providers.len() - 1) % runtime.providers.len();
+            runtime.switch_count = runtime.switch_count.saturating_sub(1);
+            runtime.last_error = error;
+            return false;
+        }
+        core.update_category(&provider).await;
         let _ = app.emit(
             "provider-switched",
             serde_json::json!({
@@ -1481,7 +1587,8 @@ async fn handle_proxy(
     app: tauri::AppHandle,
 ) -> axum::response::Response {
     // GET 请求 = 健康检查
-    if req.method() == axum::http::Method::GET {
+    if req.method() == axum::http::Method::GET && !req.uri().path().starts_with("/claude-desktop/")
+    {
         return axum::response::Response::builder()
             .status(axum::http::StatusCode::OK)
             .header("Content-Type", "text/plain; charset=utf-8")
@@ -1499,7 +1606,11 @@ async fn handle_proxy(
                 .unwrap();
         }
     };
-    let bytes = if let Some(requested) = request_model(&incoming_bytes) {
+    let claude_request = parts.uri.path().starts_with("/claude-desktop/")
+        || crate::claude::messages_path(parts.uri.path());
+    let bytes = if claude_request {
+        incoming_bytes
+    } else if let Some(requested) = request_model(&incoming_bytes) {
         let mapped = providers.read().await.mapped_model(&requested);
         match mapped {
             Some(model) => rewrite_request_model(&incoming_bytes, &model)
@@ -1543,7 +1654,8 @@ async fn handle_proxy(
         Ok(u) => u,
         Err(e) => {
             tracing::error!("Proxy error (request phase): {}", e);
-            let switched = switch_provider(&core, &providers, &app, e.to_string()).await;
+            let switched =
+                !claude_request && switch_provider(&core, &providers, &app, e.to_string()).await;
             if switched {
                 match core
                     .handle_request(
@@ -1581,7 +1693,7 @@ async fn handle_proxy(
 
     // 某些中转站会在模型已列出但当前账号组没有通道时返回特定 404。
     // 只对该错误读取一次响应体并改写 model 重试，避免普通 404 被误判或循环重试。
-    if upstream.status == 404 {
+    if upstream.status == 404 && !claude_request {
         let crate::core::UpstreamResult {
             meta: _,
             status,
@@ -2016,6 +2128,7 @@ mod proxy_tests {
 
     fn provider_with_models(models: &[&str]) -> providers::Provider {
         providers::Provider {
+            category: "openai".into(),
             id: "provider-1".into(),
             name: "Test provider".into(),
             note: String::new(),

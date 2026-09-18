@@ -1201,11 +1201,12 @@ async function updateCurrentProviderLabels() {
     try { running = (await invoke('get_proxy_status')) === 'running'; } catch {}
     try { runtime = await invoke('get_provider_runtime_status'); } catch {}
     try { list = await invoke('list_providers'); } catch {}
-    const current = runtime?.current || list.find(item => item.id === activeProviderId) || list[0] || null;
+    const current = runtime?.current || list.find(item => item.id === activeProviderId && item.category !== 'claude') || list.find(item => item.category !== 'claude') || null;
+    const claudeCurrent = list.find(item => item.category === 'claude');
     if (current?.id) activeProviderId = current.id;
-    const name = current?.name || '未配置';
-    if (el.ssRelay) el.ssRelay.textContent = current ? name : '--';
-    if (el.cfgProviderName) el.cfgProviderName.textContent = current ? name : '未配置供应商';
+    const name = [current ? `Codex: ${current.name}` : '', claudeCurrent ? `Claude: ${claudeCurrent.name}` : ''].filter(Boolean).join(' · ') || '未配置';
+    if (el.ssRelay) el.ssRelay.textContent = current || claudeCurrent ? name : '--';
+    if (el.cfgProviderName) el.cfgProviderName.textContent = current || claudeCurrent ? name : '未配置供应商';
     if (el.providerRuntime) el.providerRuntime.textContent = running
         ? `${name}${runtime?.switched ? ' · 已自动切换' : ' · 运行中'}`
         : (current ? `${name} · 代理未运行` : '代理未运行');
@@ -1238,6 +1239,8 @@ listen('proxy-status', (event) => {
 let providerItems = [];
 let draggedProviderId = null;
 let activeProviderId = null;
+let providerCategoryFilter = 'all';
+const providerCategory = p => p.category === 'claude' ? 'claude' : 'openai';
 let testingProviderId = null;
 let pendingDeleteProviderId = null;
 let providerDeleteBusy = false;
@@ -1259,7 +1262,8 @@ function providerIcon(name) {
 }
 
 function providerCard(p, index) {
-    const current = activeProviderId ? p.id === activeProviderId : index === 0;
+    const group = providerCategory(p);
+    const current = group === 'claude' ? providerItems.find(item => providerCategory(item) === 'claude')?.id === p.id : (activeProviderId ? p.id === activeProviderId : providerItems.find(item => providerCategory(item) === 'openai')?.id === p.id);
     const testing = testingProviderId === p.id;
     const testingBusy = testingProviderId !== null;
     const status = p.last_status || '未测速';
@@ -1270,7 +1274,7 @@ function providerCard(p, index) {
     return `<article class="provider-card${current ? ' current' : ''}" draggable="true" data-provider-id="${escapeHtml(p.id)}">
         <button class="provider-drag" type="button" title="拖拽调整优先级" aria-label="拖拽调整优先级"><span></span><span></span><span></span></button>
         <div class="provider-avatar" aria-hidden="true"><span>${escapeHtml(initials)}</span><small>${String(index + 1).padStart(2, '0')}</small></div>
-        <div class="provider-main"><div class="provider-title"><strong>${escapeHtml(p.name || '未命名供应商')}</strong>${current ? '<span class="provider-current"><i></i>当前使用</span>' : ''}</div>
+        <div class="provider-main"><div class="provider-title"><strong>${escapeHtml(p.name || '未命名供应商')}</strong><span class="provider-category-label">${group === 'claude' ? 'Claude' : 'OpenAI / Codex'}</span>${current ? '<span class="provider-current"><i></i>当前使用</span>' : ''}</div>
         <div class="provider-url" title="${escapeHtml(p.request_url || '')}">${escapeHtml(p.request_url || '未填写 API 请求地址')}</div><div class="provider-note">${escapeHtml(p.note || '未填写备注')}</div></div>
         <div class="provider-health"><span class="provider-status ${statusOk ? 'ok' : ''}"><i></i>${escapeHtml(status)}</span><strong>${latency}</strong><small>${(p.models || []).length} 个模型</small></div>
         <div class="provider-actions">
@@ -1289,11 +1293,9 @@ async function loadProviders() {
         providerItems = await invoke('list_providers');
         try {
             const runtime = await invoke('get_provider_runtime_status');
-            activeProviderId = runtime.current?.id || providerItems[0]?.id || null;
-        } catch { activeProviderId = providerItems[0]?.id || null; }
-        el.providerCount.textContent = providerItems.length;
-        el.providersList.innerHTML = providerItems.length ? providerItems.map(providerCard).join('') : '<div class="provider-empty">还没有供应商，点击右上角添加一个吧</div>';
-        bindProviderEvents();
+            activeProviderId = runtime.current?.id || providerItems.find(p => providerCategory(p) === 'openai')?.id || null;
+        } catch { activeProviderId = providerItems.find(p => providerCategory(p) === 'openai')?.id || null; }
+        renderProviders();
         updateProviderRuntime();
     } catch (e) { el.providersList.innerHTML = `<div class="provider-empty">加载失败：${escapeHtml(String(e))}</div>`; }
 }
@@ -1306,13 +1308,13 @@ function bindProviderEvents() {
         card.addEventListener('drop', async e => {
             e.preventDefault(); if (!draggedProviderId || draggedProviderId === card.dataset.providerId) return;
             const ids = providerItems.map(p => p.id); const from = ids.indexOf(draggedProviderId); const to = ids.indexOf(card.dataset.providerId);
-            ids.splice(from, 1); ids.splice(to, 0, draggedProviderId); providerItems = await invoke('reorder_providers', { ids }); renderProviders();
+            ids.splice(from, 1); ids.splice(to, 0, draggedProviderId); try { providerItems = await invoke('reorder_providers', { ids }); await loadProviders(); } catch (error) { showToast(String(error), 'err'); }
         });
     });
     el.providersList.querySelectorAll('[data-action]').forEach(btn => btn.addEventListener('click', async () => {
         const id = btn.dataset.id; const p = providerItems.find(x => x.id === id); if (!p) return;
         try {
-            if (btn.dataset.action === 'use') { providerItems = await invoke('use_provider', { id }); activeProviderId = id; showToast(`已切换至 ${p.name}`, 'ok'); renderProviders(); }
+            if (btn.dataset.action === 'use') { providerItems = await invoke('use_provider', { id }); if (providerCategory(p) === 'openai') activeProviderId = id; showToast(`已切换${providerCategory(p) === 'claude' ? ' Claude' : ''}至 ${p.name}${providerCategory(p) === 'claude' ? '，请重启 Claude 客户端' : ''}`, 'ok'); renderProviders(); }
             if (btn.dataset.action === 'edit') openProviderModal(p);
             if (btn.dataset.action === 'duplicate') { const copy = { ...p, id: '', name: `${p.name} 副本` }; openProviderModal(copy); }
             if (btn.dataset.action === 'delete') openProviderDeleteModal(p);
@@ -1339,9 +1341,10 @@ async function testProvider(provider) {
 }
 
 function renderProviders() {
-    if (!providerItems.some(item => item.id === activeProviderId)) activeProviderId = providerItems[0]?.id || null;
+    if (!providerItems.some(item => item.id === activeProviderId)) activeProviderId = providerItems.find(p => providerCategory(p) === 'openai')?.id || null;
+    const shown = providerItems.filter(p => providerCategoryFilter === 'all' || providerCategory(p) === providerCategoryFilter);
     el.providerCount.textContent = providerItems.length;
-    el.providersList.innerHTML = providerItems.length ? providerItems.map(providerCard).join('') : '<div class="provider-empty">还没有供应商，点击右上角添加一个吧</div>';
+    el.providersList.innerHTML = shown.length ? shown.map(p => providerCard(p, providerItems.indexOf(p))).join('') : '<div class="provider-empty">此分类还没有供应商，点击右上角添加。</div>';
     bindProviderEvents();
 }
 
@@ -1370,6 +1373,7 @@ function populateModelPicker(models = [], selected = '') {
 function openProviderModal(p = null) {
     providerModalPreviousFocus = document.activeElement;
     $('provider-modal-title').textContent = p ? '编辑供应商' : '添加供应商';
+    setProviderCategory(p ? providerCategory(p) : providerCategoryFilter === 'claude' ? 'claude' : 'openai');
     $('provider-id').value = p?.id || ''; $('provider-name').value = p?.name || ''; $('provider-note').value = p?.note || '';
     $('provider-official-url').value = p?.official_url || ''; $('provider-api-key').value = p?.api_key || ''; $('provider-request-url').value = p?.request_url || '';
     $('provider-full-url').checked = !!p?.full_url; $('provider-default-model').value = p?.default_model || '';
@@ -1388,7 +1392,7 @@ function closeProviderModal() {
     providerModalPreviousFocus?.focus?.();
     providerModalPreviousFocus = null;
 }
-function providerForm() { return { id: $('provider-id').value, name: $('provider-name').value.trim(), note: $('provider-note').value.trim(), official_url: $('provider-official-url').value.trim(), api_key: $('provider-api-key').value.trim(), request_url: $('provider-request-url').value.trim(), full_url: $('provider-full-url').checked, default_model: $('provider-default-model').value.trim(), models: Array.from($('provider-model').options).slice(1).map(o => o.value).filter(Boolean) }; }
+function providerForm() { return { category: $('provider-category').value, id: $('provider-id').value, name: $('provider-name').value.trim(), note: $('provider-note').value.trim(), official_url: $('provider-official-url').value.trim(), api_key: $('provider-api-key').value.trim(), request_url: $('provider-request-url').value.trim(), full_url: $('provider-full-url').checked, default_model: $('provider-default-model').value.trim(), models: Array.from($('provider-model').options).slice(1).map(o => o.value).filter(Boolean) }; }
 function renderProvidersFromState() { renderProviders(); }
 
 function openProviderDeleteModal(provider) {
@@ -1468,7 +1472,7 @@ async function confirmProviderDelete() {
     try {
         providerItems = await invoke('delete_provider', { id });
         if (deletingCurrent) {
-            activeProviderId = providerItems[0]?.id || null;
+            activeProviderId = providerItems.find(p => providerCategory(p) === 'openai')?.id || null;
             if (activeProviderId && !isRunning) providerItems = await invoke('use_provider', { id: activeProviderId });
         }
         providerDeleteBusy = false;
@@ -1506,7 +1510,15 @@ $('provider-key-toggle')?.addEventListener('click', () => {
     button.setAttribute('aria-label', button.title);
     input.focus();
 });
-$('provider-modal')?.addEventListener('keydown', e => { if (e.key === 'Escape') closeProviderModal(); });
+$('provider-modal')?.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { e.preventDefault(); closeProviderModal(); }
+    if (e.key === 'Tab') {
+        const items = [...$('provider-modal').querySelectorAll('button:not(:disabled), input:not([type="hidden"]):not(:disabled)')].filter(item => item.tabIndex >= 0 && item.getClientRects().length);
+        const first = items[0], last = items[items.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+    }
+});
 $('provider-delete-cancel')?.addEventListener('click', closeProviderDeleteModal);
 $('provider-delete-confirm')?.addEventListener('click', confirmProviderDelete);
 $('provider-delete-modal')?.addEventListener('click', e => { if (e.target === e.currentTarget) closeProviderDeleteModal(); });
@@ -1924,3 +1936,39 @@ async function init() {
 }
 
 init();
+
+$('btn-provider-claude-test')?.addEventListener('click', async () => {
+    const button = $('btn-provider-claude-test'); button.disabled = true;
+    $('provider-modal-message').textContent = '正在验证 Anthropic Messages 接口…';
+    try { $('provider-modal-message').textContent = await invoke('test_claude_provider', { provider: providerForm() }); }
+    catch (error) { $('provider-modal-message').textContent = String(error); }
+    finally { button.disabled = false; }
+});
+
+function setProviderCategory(category) {
+    $('provider-category').value = category;
+    document.querySelectorAll('[data-provider-category]').forEach(button => {
+        const selected = button.dataset.providerCategory === category;
+        button.setAttribute('aria-checked', String(selected)); button.tabIndex = selected ? 0 : -1;
+    });
+    const claude = category === 'claude';
+    $('provider-api-hint').textContent = claude ? 'Anthropic Messages 的 API 基础地址，勿填写 /messages 端点' : 'OpenAI 兼容的 Responses API 基础地址';
+    $('provider-default-model').placeholder = claude ? 'claude-sonnet-4-6' : 'gpt-5.6-sol';
+    $('provider-claude-hint').hidden = !claude;
+    $('btn-provider-claude-test').hidden = !claude;
+}
+document.querySelectorAll('[data-provider-category]').forEach(button => {
+    button.addEventListener('click', () => setProviderCategory(button.dataset.providerCategory));
+    button.addEventListener('keydown', event => {
+        if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const buttons = [...document.querySelectorAll('[data-provider-category]')];
+        const next = event.key === 'Home' ? buttons[0] : event.key === 'End' ? buttons[1] : buttons.find(b => b !== button);
+        setProviderCategory(next.dataset.providerCategory); next.focus();
+    });
+});
+document.querySelectorAll('[data-provider-filter]').forEach(button => button.addEventListener('click', () => {
+    providerCategoryFilter = button.dataset.providerFilter;
+    document.querySelectorAll('[data-provider-filter]').forEach(b => b.setAttribute('aria-pressed', String(b === button)));
+    renderProviders();
+}));

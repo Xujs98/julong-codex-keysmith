@@ -13,6 +13,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
+const LEGACY_IDS: [&str; 6] = ["codex", "claude", "grok", "deepseek", "glm53", "gemini"];
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
@@ -29,7 +30,7 @@ impl Drop for Fixture {
 fn settings(f: &Fixture) -> Settings {
     Settings {
         schema_version: 1,
-        environments: environments::IDS
+        environments: LEGACY_IDS
             .iter()
             .map(|id| {
                 let p = f.0.join(id);
@@ -40,11 +41,13 @@ fn settings(f: &Fixture) -> Settings {
                     path: p.to_string_lossy().into_owned(),
                 }
             })
+            .chain([Environment {
+                id: "claude-desktop".into(),
+                enabled: false,
+                path: String::new(),
+            }])
             .collect(),
-        profiles: environments::IDS
-            .iter()
-            .map(|id| format!("astra-{id}"))
-            .collect(),
+        profiles: LEGACY_IDS.iter().map(|id| format!("astra-{id}")).collect(),
     }
 }
 #[test]
@@ -53,7 +56,7 @@ fn six_native_environments_selection_redeploy_and_byte_exact_restore() {
     let home = f.0.join("state");
     let mut s = settings(&f);
     let mut original = BTreeMap::new();
-    for env in &s.environments {
+    for env in s.environments.iter().filter(|e| e.enabled) {
         let path = PathBuf::from(&env.path).join(environments::metadata(&env.id).unwrap().3);
         let bytes = format!("User-owned {}\r\nDo not change.\r\n", env.id).into_bytes();
         fs::write(&path, &bytes).unwrap();
@@ -69,7 +72,7 @@ fn six_native_environments_selection_redeploy_and_byte_exact_restore() {
     for (p, bytes) in original.keys().zip(first) {
         assert_eq!(fs::read(p).unwrap(), bytes);
     }
-    for id in environments::IDS {
+    for id in LEGACY_IDS {
         upstream::verify(&format!("astra-{id}")).unwrap();
         assert!(f
             .0
@@ -154,7 +157,7 @@ async fn gateway() -> (
     let upstream_task = tokio::spawn(async move {
         axum::serve(listener, upstream_app).await.unwrap();
     });
-    let packs = environments::IDS
+    let packs = LEGACY_IDS
         .iter()
         .map(|id| ((*id).into(), format!("PACK_{id}")))
         .collect();
@@ -197,7 +200,7 @@ fn body(seat: &str, text: &str, stream: bool) -> (&'static str, Value) {
 async fn real_http_gateway_six_protocols_exact_activation_and_session_isolation() {
     let (base, seen, task, up) = gateway().await;
     let client = reqwest::Client::new();
-    for seat in environments::IDS {
+    for seat in LEGACY_IDS {
         let (path, request) = body(seat, "hello before activation", false);
         let send = |body: Value, session: &str| {
             client
@@ -438,11 +441,11 @@ fn select_only(settings: &mut Settings, ids: &[&str]) {
 
 #[test]
 fn restore_each_selected_client_preserves_other_clients_and_their_backups() {
-    for selected in environments::IDS {
+    for selected in LEGACY_IDS {
         let f = Fixture::new();
         let home = f.0.join("state");
         let mut s = settings(&f);
-        for env in &s.environments {
+        for env in s.environments.iter().filter(|e| e.enabled) {
             let root = PathBuf::from(&env.path);
             fs::write(
                 root.join(environments::metadata(&env.id).unwrap().3),
@@ -460,7 +463,7 @@ fn restore_each_selected_client_preserves_other_clients_and_their_backups() {
         let codex = f.0.join("codex");
         fs::write(codex.join("config.toml"), b"original config").unwrap();
         fs::write(codex.join("auth.json"), b"original auth").unwrap();
-        let original: BTreeMap<_, _> = environments::IDS
+        let original: BTreeMap<_, _> = LEGACY_IDS
             .iter()
             .map(|id| (*id, tree_bytes(&f.0.join(id))))
             .collect();
@@ -478,7 +481,7 @@ fn restore_each_selected_client_preserves_other_clients_and_their_backups() {
         fs::write(codex.join("config.toml"), b"proxy config").unwrap();
         fs::write(codex.join("auth.json"), b"proxy auth").unwrap();
         fs::write(codex.join("bridge.md"), b"bootstrap").unwrap();
-        let deployed: BTreeMap<_, _> = environments::IDS
+        let deployed: BTreeMap<_, _> = LEGACY_IDS
             .iter()
             .map(|id| (*id, tree_bytes(&f.0.join(id))))
             .collect();
@@ -488,7 +491,7 @@ fn restore_each_selected_client_preserves_other_clients_and_their_backups() {
         environments::save_at(&home, s.clone()).unwrap();
         let ids = environments::selected_ids(&s);
         environments::restore_selected_configuration_at(&home, &ids).unwrap();
-        for id in environments::IDS {
+        for id in LEGACY_IDS {
             assert_eq!(
                 tree_bytes(&f.0.join(id)),
                 if id == selected {
@@ -516,11 +519,11 @@ fn restore_each_selected_client_preserves_other_clients_and_their_backups() {
             manifest_before_repeat
         );
         // Backups left by the partial restore can still restore every other client.
-        select_only(&mut s, &environments::IDS);
+        select_only(&mut s, &LEGACY_IDS);
         environments::save_at(&home, s.clone()).unwrap();
         environments::restore_selected_configuration_at(&home, &environments::selected_ids(&s))
             .unwrap();
-        for id in environments::IDS {
+        for id in LEGACY_IDS {
             assert_eq!(tree_bytes(&f.0.join(id)), original[id]);
         }
         assert!(!home.join("environment-deployment.json").exists());

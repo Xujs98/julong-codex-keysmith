@@ -18,6 +18,8 @@ const STORE_FILE: &str = "julong-providers.json";
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Provider {
     pub id: String,
+    #[serde(default = "default_category")]
+    pub category: String,
     pub name: String,
     #[serde(default)]
     pub note: String,
@@ -44,7 +46,14 @@ pub struct Provider {
     pub updated_at: String,
 }
 
+fn default_category() -> String {
+    "openai".into()
+}
+
 impl Provider {
+    pub fn is_claude(&self) -> bool {
+        self.category == "claude"
+    }
     pub fn normalized_url(&self) -> String {
         let mut url = self.request_url.trim().trim_end_matches('/').to_string();
         if !self.full_url && !url.ends_with("/v1") {
@@ -66,7 +75,11 @@ pub fn valid_relay_url(url: &str) -> bool {
 /// 已保存，即使 relay_url.txt 尚未生成，也能正常进入启动流程。
 pub fn configured_relay_url(home: &Path) -> Option<String> {
     if let Ok(list) = load_or_migrate(home) {
-        for provider in list {
+        for provider in list
+            .iter()
+            .filter(|p| !p.is_claude())
+            .chain(list.iter().filter(|p| p.is_claude()))
+        {
             let url = provider.normalized_url();
             if valid_relay_url(&url) {
                 return Some(url);
@@ -108,7 +121,7 @@ impl ProviderRuntime {
         let home = DeployManager::find_codex_home().ok_or("Codex home not found")?;
         let providers = load_or_migrate(&home)?;
         let mut runtime = Self::empty();
-        runtime.providers = providers;
+        runtime.providers = providers.into_iter().filter(|p| !p.is_claude()).collect();
         Ok(runtime)
     }
     pub fn current(&self) -> Option<&Provider> {
@@ -168,6 +181,7 @@ pub fn load_or_migrate(home: &Path) -> Result<Vec<Provider>, String> {
         let now = Utc::now().to_rfc3339();
         let p = Provider {
             id: Uuid::new_v4().to_string(),
+            category: default_category(),
             name: "默认供应商".into(),
             note: "从现有中转站配置迁移".into(),
             official_url: String::new(),
@@ -216,6 +230,10 @@ fn read_model(home: &Path) -> Option<String> {
 
 pub fn activate(provider: &Provider, proxy_active: bool) -> Result<String, String> {
     let manager = DeployManager::new().ok_or("Codex home not found")?;
+    if provider.is_claude() {
+        crate::environments::sync_claude_provider(provider)?;
+        return Ok(provider.normalized_url());
+    }
     let value = activate_at(manager.codex_home(), provider, proxy_active)?;
     if let Err(error) = manager.refresh_config_integrity() {
         tracing::warn!("refresh provider config integrity failed: {}", error);
@@ -460,6 +478,9 @@ fn replace_or_append(text: &str, pattern: &str, replacement: &str) -> String {
 }
 
 pub fn save(provider: Provider) -> Result<Vec<Provider>, String> {
+    if !["openai", "claude"].contains(&provider.category.as_str()) {
+        return Err("未知供应商分类".into());
+    }
     let home = DeployManager::find_codex_home().ok_or("Codex home not found")?;
     let mut list = load_or_migrate(&home)?;
     let mut p = provider;
@@ -571,7 +592,10 @@ pub async fn test(provider: &Provider) -> Result<Provider, String> {
         .map_err(|e| e.to_string())?;
     let mut req = client.get(format!("{}/models", provider.normalized_url()));
     if !provider.api_key.trim().is_empty() {
-        req = req.bearer_auth(&provider.api_key);
+        req = req
+            .bearer_auth(&provider.api_key)
+            .header("x-api-key", &provider.api_key)
+            .header("anthropic-version", "2023-06-01");
     }
     let response = req.send().await.map_err(|e| e.to_string())?;
     let mut p = provider.clone();
@@ -590,7 +614,10 @@ pub async fn models(provider: &Provider) -> Result<Vec<String>, String> {
         .map_err(|e| e.to_string())?;
     let mut req = client.get(format!("{}/models", provider.normalized_url()));
     if !provider.api_key.trim().is_empty() {
-        req = req.bearer_auth(&provider.api_key);
+        req = req
+            .bearer_auth(&provider.api_key)
+            .header("x-api-key", &provider.api_key)
+            .header("anthropic-version", "2023-06-01");
     }
     let value: Value = req
         .send()
@@ -617,6 +644,7 @@ mod tests {
     fn provider() -> Provider {
         Provider {
             id: "provider-1".into(),
+            category: "openai".into(),
             name: "主力供应商".into(),
             note: String::new(),
             official_url: String::new(),
@@ -735,4 +763,53 @@ mod tests {
         assert_eq!(load_or_migrate(&root).unwrap()[0].default_model, "gpt-5.6");
         fs::remove_dir_all(root).unwrap();
     }
+}
+
+/// Explicit user-triggered inference check; unlike /models this proves Messages support.
+pub async fn test_claude(provider: &Provider) -> Result<String, String> {
+    let model = crate::claude_desktop::models(provider)
+        .into_iter()
+        .next()
+        .ok_or("请先填写 Claude 默认模型或下载包含 Claude 的模型列表")?;
+    if provider.api_key.trim().is_empty() {
+        return Err("请先填写 API Key".into());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let response = client.post(format!("{}/messages", provider.normalized_url()))
+        .bearer_auth(provider.api_key.trim()).header("x-api-key", provider.api_key.trim()).header("anthropic-version", "2023-06-01")
+        .json(&serde_json::json!({"model":model,"max_tokens":16,"messages":[{"role":"user","content":"Reply OK."}],"stream":false}))
+        .send().await.map_err(|e|e.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Claude Messages 验收失败：HTTP {}，请检查协议、Key 与模型权限",
+            response.status()
+        ));
+    }
+    let value: Value = response
+        .json()
+        .await
+        .map_err(|_| "上游没有返回有效 JSON".to_string())?;
+    if value.get("type").and_then(Value::as_str) != Some("message")
+        || !value.get("content").is_some_and(Value::is_array)
+    {
+        return Err("上游返回的不是 Anthropic Messages 响应，不能据此确认 Claude 可用".into());
+    }
+    Ok(format!(
+        "Claude Messages 验收通过：{model}。部署后保持代理运行，并重启 Claude 客户端。"
+    ))
+}
+
+pub fn selected_claude_at(home: &Path) -> Result<Option<Provider>, String> {
+    Ok(load_or_migrate(home)?
+        .into_iter()
+        .find(|p| p.is_claude() && valid_relay_url(&p.normalized_url())))
+}
+
+pub fn selected_openai_at(home: &Path) -> Result<Option<Provider>, String> {
+    Ok(load_or_migrate(home)?
+        .into_iter()
+        .find(|p| !p.is_claude() && valid_relay_url(&p.normalized_url())))
 }

@@ -422,3 +422,12 @@ body.modal-open{overflow:hidden}
 .environment-dialog-result { color: var(--accent-main); }
 .environment-directory { display: block; margin-top: 12px; overflow-wrap: anywhere; text-align: left; width: 100%; }
 @media (max-width: 1080px) { .environment-grid { grid-template-columns: 1fr; } }
+
+/* Supplier protocol categories: custom buttons with native keyboard focus. */
+.provider-categories { display:flex; flex-wrap:wrap; gap:8px; padding:10px 0 16px; }
+.provider-categories .btn[aria-pressed="true"], .provider-categories .btn[aria-checked="true"] { color:var(--accent, #366fee); background:var(--accent-bg, #edf3ff); border-color:var(--accent, #366fee); }
+.provider-categories .btn:focus-visible { outline:2px solid var(--accent, #366fee); outline-offset:3px; }
+.provider-category-label { font-size:11px; color:var(--text-3); border:1px solid var(--border, #dce2eb); border-radius:6px; padding:2px 6px; white-space:nowrap; }
+#provider-claude-hint { padding:0 24px; }
+#btn-provider-claude-test { margin:8px 24px; align-self:flex-start; }
+#btn-provider-claude-test[hidden], #provider-claude-hint[hidden] { display:none; }

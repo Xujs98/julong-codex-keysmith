@@ -4,6 +4,14 @@ use serde_json::{json, Value};
 pub const LOCAL_TOKEN: &str = "julong-local-proxy";
 
 pub fn render_settings(original: Option<&[u8]>, base_url: &str) -> Result<Vec<u8>, String> {
+    render_provider_settings(original, base_url, None)
+}
+
+pub fn render_provider_settings(
+    original: Option<&[u8]>,
+    base_url: &str,
+    provider: Option<&crate::providers::Provider>,
+) -> Result<Vec<u8>, String> {
     let mut value: Value = match original {
         None => json!({}),
         Some(bytes) => serde_json::from_slice(bytes)
@@ -61,6 +69,33 @@ pub fn render_settings(original: Option<&[u8]>, base_url: &str) -> Result<Vec<u8
         })
     {
         env.insert("ANTHROPIC_AUTH_TOKEN".into(), json!(LOCAL_TOKEN));
+    }
+    if let Some(provider) = provider {
+        if provider.api_key.trim().is_empty() {
+            return Err("Claude 供应商 API Key 不能为空".into());
+        }
+        env.insert(
+            "ANTHROPIC_AUTH_TOKEN".into(),
+            json!(provider.api_key.trim()),
+        );
+        env.remove("ANTHROPIC_API_KEY");
+        // Select Claude models only; a shared Codex default must not overwrite them.
+        let models = crate::claude_desktop::models(provider);
+        if let Some(model) = models.first() {
+            env.insert("ANTHROPIC_MODEL".into(), json!(model));
+            for (role, key) in [
+                ("sonnet", "ANTHROPIC_DEFAULT_SONNET_MODEL"),
+                ("opus", "ANTHROPIC_DEFAULT_OPUS_MODEL"),
+                ("haiku", "ANTHROPIC_DEFAULT_HAIKU_MODEL"),
+            ] {
+                let chosen = models
+                    .iter()
+                    .find(|m| m.contains(&format!("claude-{role}-")))
+                    .unwrap_or(model);
+                env.insert(key.into(), json!(chosen));
+            }
+            object.insert("model".into(), json!(model));
+        }
     }
     let mut bytes = serde_json::to_vec_pretty(&value).map_err(|e| e.to_string())?;
     bytes.push(b'\n');

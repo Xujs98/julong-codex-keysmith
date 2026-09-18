@@ -49,6 +49,16 @@ fn reply(body: &Value) -> Response {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires JULONG_CLAUDE_TEST_BIN pointing to an installed native Claude executable"]
 async fn native_claude_settings_activation_resume_and_isolation() {
+    run_native_client(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires JULONG_CLAUDE_TEST_BIN; checks Desktop profile transport with native engine, not GUI"]
+async fn desktop_profile_native_engine_activation_resume_and_isolation() {
+    run_native_client(true).await;
+}
+
+async fn run_native_client(desktop: bool) {
     let binary =
         std::env::var_os("JULONG_CLAUDE_TEST_BIN").expect("JULONG_CLAUDE_TEST_BIN required");
     let f = Fixture(
@@ -85,12 +95,14 @@ async fn native_claude_settings_activation_resume_and_isolation() {
     let up = tokio::spawn(async move {
         axum::serve(listener, upstream).await.unwrap();
     });
+    let provider: julong_codex_keysmith::providers::Provider = serde_json::from_value(json!({"id":"native-test", "category":"claude", "name":"native-test", "request_url":format!("http://{upstream_addr}"), "api_key":"dummy-relay-key"})).unwrap();
     let core = Arc::new(
         MitmCore::builder()
-            .target(format!("http://{upstream_addr}/v1"))
-            .anthropic_api_key(Some("dummy-relay-key".into()))
+            .target("http://unused.invalid")
+            .openai_provider(None)
+            .claude_provider(Some(&provider))
             .activation_gate(ActivationGate::new(BTreeMap::from([(
-                "claude".into(),
+                if desktop { "claude-desktop" } else { "claude" }.into(),
                 "NATIVE_CLAUDE_TEST_PACK".into(),
             )])))
             .response_parser(UniversalSseParser)
@@ -103,11 +115,21 @@ async fn native_claude_settings_activation_resume_and_isolation() {
         axum::serve(listener, proxy_router(core)).await.unwrap();
     });
     let settings = f.0.join("home/.claude/settings.json");
-    fs::write(
-        &settings,
-        claude::render_settings(None, &format!("http://{addr}")).unwrap(),
-    )
-    .unwrap();
+    let bytes = if desktop {
+        use julong_codex_keysmith::{claude_desktop, providers::Provider};
+        let provider: Provider = serde_json::from_value(json!({"id":"fixture", "category":"claude", "name":"fixture", "request_url":"http://127.0.0.1", "api_key":"dummy-desktop-key", "default_model":"claude-sonnet-4-6"})).unwrap();
+        let profile: Value = serde_json::from_slice(
+            &claude_desktop::render(claude_desktop::FileKind::Profile, None, &provider).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(profile["inferenceGatewayBaseUrl"], claude_desktop::BASE_URL);
+        // Desktop materializes gateway settings into the native engine's env.
+        // Use an isolated port while preserving the generated route namespace.
+        serde_json::to_vec(&json!({"env":{"ANTHROPIC_BASE_URL":format!("http://{addr}/claude-desktop"), "ANTHROPIC_AUTH_TOKEN":profile["inferenceGatewayApiKey"]}})).unwrap()
+    } else {
+        claude::render_settings(None, &format!("http://{addr}")).unwrap()
+    };
+    fs::write(&settings, bytes).unwrap();
     let session = uuid::Uuid::new_v4().to_string();
     for (index, prompt) in [
         "矩龙",

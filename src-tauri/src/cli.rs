@@ -802,12 +802,8 @@ async fn run_headless_proxy() -> Result<(), String> {
     let core = Arc::new(
         MitmCore::builder()
             .target(relay)
-            .anthropic_api_key(
-                providers::load_or_migrate(manager.codex_home())?
-                    .into_iter()
-                    .find(|p| providers::valid_relay_url(&p.normalized_url()))
-                    .map(|p| p.api_key),
-            )
+            .openai_provider(providers::selected_openai_at(manager.codex_home())?.as_ref())
+            .claude_provider(providers::selected_claude_at(manager.codex_home())?.as_ref())
             .activation_gate(activation::ActivationGate::deployed()?)
             .response_parser(UniversalSseParser)
             .response_interceptor(TamperEngine::default_rules())
@@ -827,7 +823,7 @@ async fn headless_handler(
     req: axum::extract::Request,
     core: Arc<MitmCore>,
 ) -> axum::response::Response {
-    if req.method() == http::Method::GET {
+    if req.method() == http::Method::GET && !req.uri().path().starts_with("/claude-desktop/") {
         return response(
             StatusCode::OK,
             "text/plain; charset=utf-8",

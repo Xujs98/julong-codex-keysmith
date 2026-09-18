@@ -30,6 +30,9 @@ pub struct MitmCore {
 struct UpstreamTarget {
     url: String,
     anthropic_api_key: Option<String>,
+    claude: Option<(String, String)>,
+    split_claude: bool,
+    openai_available: bool,
 }
 
 /// 阶段 1 产物: 请求拦截后的元数据 + 上游响应
@@ -52,12 +55,13 @@ impl MitmCore {
         body: &[u8],
         path: &str,
     ) -> Option<axum::response::Response> {
+        let (headers, path) = crate::claude_desktop::normalize_request(headers, path);
         let data = serde_json::from_slice(body).ok()?;
         self.activation
             .as_ref()?
             .lock()
             .ok()?
-            .local_response(headers, &data, path)
+            .local_response(&headers, &data, &path)
     }
 
     pub async fn set_target(&self, target: impl Into<String>) {
@@ -68,7 +72,29 @@ impl MitmCore {
         *self.target.write().await = UpstreamTarget {
             url: target.into(),
             anthropic_api_key: Some(api_key.into()),
+            claude: None,
+            split_claude: false,
+            openai_available: true,
         };
+    }
+
+    pub async fn update_category(&self, provider: &crate::providers::Provider) {
+        let mut target = self.target.write().await;
+        if provider.is_claude() {
+            target.claude = Some((provider.normalized_url(), provider.api_key.clone()));
+            target.split_claude = true;
+        } else {
+            target.url = provider.normalized_url();
+            target.openai_available = true;
+        }
+    }
+    pub async fn clear_openai_provider(&self) {
+        self.target.write().await.openai_available = false;
+    }
+    pub async fn clear_claude_provider(&self) {
+        let mut target = self.target.write().await;
+        target.claude = None;
+        target.split_claude = true;
     }
 
     /// 阶段 1: 请求拦截 → 转发上游 → 返回流式响应
@@ -80,8 +106,14 @@ impl MitmCore {
         headers: HeaderMap,
         body: Bytes,
     ) -> Result<UpstreamResult, Box<dyn std::error::Error + Send + Sync>> {
-        // 1. 解析请求 JSON
-        let data: serde_json::Value = serde_json::from_slice(&body)?;
+        let (headers, path_and_query) =
+            crate::claude_desktop::normalize_request(&headers, &path_and_query);
+        // Model discovery and other GET requests carry no JSON body.
+        let data: serde_json::Value = if body.is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::from_slice(&body)?
+        };
         let user_msg = extract_user(&data);
         let category = categorize(&user_msg);
 
@@ -121,8 +153,26 @@ impl MitmCore {
 
         // 3. 转发到上游 — 跳过 hop-by-hop 头
         let target = self.target.read().await;
-        let url = upstream_url(&target.url, &path_and_query);
-        let anthropic_key = target.anthropic_api_key.clone();
+        let claude_request = crate::claude::messages_path(&path_and_query)
+            || headers
+                .get("x-julong-environment")
+                .and_then(|h| h.to_str().ok())
+                == Some("claude-desktop");
+        if !claude_request && !target.openai_available {
+            return Err("尚未配置 OpenAI / Codex 分类供应商".into());
+        }
+        let (url, anthropic_key) = if claude_request && target.split_claude {
+            let (url, key) = target
+                .claude
+                .as_ref()
+                .ok_or("尚未配置 Claude 分类供应商，请在供应商页面添加后选择使用")?;
+            (upstream_url(url, &path_and_query), Some(key.clone()))
+        } else {
+            (
+                upstream_url(&target.url, &path_and_query),
+                target.anthropic_api_key.clone(),
+            )
+        };
         drop(target);
         tracing::debug!(url = %url, "forwarding to upstream");
 
@@ -142,7 +192,12 @@ impl MitmCore {
             forward_headers.insert(name.clone(), value.clone());
         }
 
-        if crate::claude::messages_path(&path_and_query) {
+        if crate::claude::messages_path(&path_and_query)
+            || headers
+                .get("x-julong-environment")
+                .and_then(|h| h.to_str().ok())
+                == Some("claude-desktop")
+        {
             if let Some(key) = anthropic_key
                 .as_deref()
                 .map(str::trim)
@@ -155,10 +210,15 @@ impl MitmCore {
                     "authorization",
                     http::HeaderValue::from_str(&format!("Bearer {key}"))?,
                 );
-            } else if forward_headers
-                .get("authorization")
-                .and_then(|v| v.to_str().ok())
-                == Some(&format!("Bearer {}", crate::claude::LOCAL_TOKEN))
+            } else if anthropic_key.is_some()
+                || headers
+                    .get("x-julong-environment")
+                    .and_then(|h| h.to_str().ok())
+                    == Some("claude-desktop")
+                || forward_headers
+                    .get("authorization")
+                    .and_then(|v| v.to_str().ok())
+                    == Some(&format!("Bearer {}", crate::claude::LOCAL_TOKEN))
             {
                 return Err(
                     "Claude Code 接入缺少供应商 API Key，请在供应商页面配置后重启代理".into(),
@@ -166,13 +226,14 @@ impl MitmCore {
             }
         }
 
-        let resp = self
-            .client
-            .request(method, &url)
-            .headers(forward_headers)
-            .json(&req_ctx.body)
-            .send()
-            .await?;
+        let is_get = method == Method::GET || method == Method::HEAD;
+        let request = self.client.request(method, &url).headers(forward_headers);
+        let request = if is_get {
+            request
+        } else {
+            request.json(&req_ctx.body)
+        };
+        let resp = request.send().await?;
 
         let status = resp.status().as_u16();
         let content_type = resp
@@ -251,6 +312,9 @@ impl MitmCore {
 }
 
 pub struct MitmCoreBuilder {
+    openai_available: bool,
+    claude: Option<(String, String)>,
+    split_claude: bool,
     activation: Option<crate::activation::ActivationGate>,
     target: Option<String>,
     anthropic_api_key: Option<String>,
@@ -263,6 +327,9 @@ pub struct MitmCoreBuilder {
 impl MitmCoreBuilder {
     pub fn new() -> Self {
         Self {
+            openai_available: true,
+            claude: None,
+            split_claude: false,
             activation: None,
             target: None,
             anthropic_api_key: None,
@@ -285,6 +352,21 @@ impl MitmCoreBuilder {
 
     pub fn anthropic_api_key(mut self, api_key: Option<String>) -> Self {
         self.anthropic_api_key = api_key;
+        self
+    }
+
+    pub fn openai_provider(mut self, provider: Option<&crate::providers::Provider>) -> Self {
+        self.openai_available = provider.is_some();
+        if let Some(provider) = provider {
+            self.target = Some(provider.normalized_url());
+        }
+        self
+    }
+    pub fn claude_provider(mut self, provider: Option<&crate::providers::Provider>) -> Self {
+        self.split_claude = true;
+        self.claude = provider
+            .filter(|p| p.is_claude())
+            .map(|p| (p.normalized_url(), p.api_key.clone()));
         self
     }
 
@@ -314,6 +396,9 @@ impl MitmCoreBuilder {
             target: Arc::new(RwLock::new(UpstreamTarget {
                 url: self.target.ok_or("target not set")?,
                 anthropic_api_key: self.anthropic_api_key,
+                claude: self.claude,
+                split_claude: self.split_claude,
+                openai_available: self.openai_available,
             })),
             client: self.client.unwrap_or_else(|| {
                 Client::builder()
