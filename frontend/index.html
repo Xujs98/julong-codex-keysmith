@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>矩龙破甲 · v0.2.12</title>
+    <title>矩龙破甲 · v0.2.13</title>
     <link rel="stylesheet" href="styles.css">
     <script type="module" src="app.js"></script>
 </head>
@@ -14,7 +14,7 @@
     <div class="tb-logo" data-tauri-drag-region>
         <img class="tb-logo-image" src="assets/molong-logo.png" alt="矩龙破甲" data-tauri-drag-region>
         <span class="tb-logo-text" data-tauri-drag-region>矩龙破甲</span>
-        <span class="tb-logo-sub" data-tauri-drag-region>Desktop Edition · v0.2.12</span>
+        <span class="tb-logo-sub" data-tauri-drag-region>Desktop Edition · v0.2.13</span>
     </div>
     <div class="tb-spacer" data-tauri-drag-region></div>
     <button class="tb-btn" id="tb-minimize" title="最小化">—</button>
@@ -33,16 +33,21 @@
     </div>
 </div>
 
-<div class="preflight-modal" id="preview-modal" style="display:none;">
+<div class="preflight-modal" id="preview-modal" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="preview-title" aria-describedby="preview-scroll-status">
     <div class="preflight-card preview-card">
-        <div class="modal-eyebrow">部署预览</div>
-        <div class="preflight-title">应用变更前确认</div>
-        <div class="preview-state" id="preview-state">准备中…</div>
-        <div class="preflight-list" id="preview-list"></div>
-        <div class="preflight-actions">
-            <button class="btn" id="preview-cancel">取消</button>
-            <button class="btn btn-red solid" id="preview-confirm">确认部署</button>
-        </div>
+        <header class="preview-card-header">
+            <div class="modal-eyebrow">部署预览</div>
+            <div class="preflight-title" id="preview-title">应用变更前确认</div>
+            <div class="preview-state" id="preview-state">准备中…</div>
+        </header>
+        <div class="preflight-list preview-scroll-region" id="preview-list" tabindex="0" aria-label="部署变更列表" aria-describedby="preview-scroll-status"></div>
+        <footer class="preview-card-footer">
+            <div class="preview-scroll-status" id="preview-scroll-status" data-state="pending" role="status" aria-live="polite">请向下滚动并查看全部变更</div>
+            <div class="preflight-actions preview-actions">
+                <button class="btn" id="preview-cancel" type="button">取消</button>
+                <button class="btn btn-red solid" id="preview-confirm" type="button" disabled aria-disabled="true">确认部署</button>
+            </div>
+        </footer>
     </div>
 </div>
 
@@ -230,7 +235,7 @@
             <div class="dash-pad">
                 <section class="hero-card">
                     <div class="hero-copy">
-                        <div class="eyebrow">矩龙破甲 · v0.2.12</div>
+                        <div class="eyebrow">矩龙破甲 · v0.2.13</div>
                         <h1>把每一次交互，<span>变成可控能力。</span></h1>
                         <p>本地代理、指令增强与 Skills 工作流集中管理。数据留在本机，状态一目了然。</p>
                         <div class="hero-actions">

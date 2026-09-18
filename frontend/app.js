@@ -1,4 +1,5 @@
 import "./environments.js";
+import { createScrollGate } from "./scroll-gate.mjs";
 // Super-Instruct — 前端事件监听 + 渲染 + Tauri 命令调用
 
 const { invoke } = window.__TAURI__.core;
@@ -87,6 +88,8 @@ let proxyBusy = false;
 let stopConfirmTimer = null;
 let stopConfirmRemaining = 0;
 let stopConfirmPreviousFocus = null;
+let deploymentPreviewPreviousFocus = null;
+let deploymentPreviewScrollGate = null;
 const STOP_CONFIRM_SETTINGS_KEY = 'julong-stop-confirm-settings';
 const STOP_CONFIRM_DEFAULTS = Object.freeze({ enabled: true, seconds: 3 });
 let stopConfirmSettings = readStopConfirmSettings();
@@ -1074,30 +1077,73 @@ async function deployWithPreview() {
     try {
         const preview = await invoke('preview_deployment');
         const conflict = preview.state === 'conflict';
+        const modal = $('preview-modal');
+        const scroller = $('preview-list');
+        const confirm = $('preview-confirm');
         $('preview-state').textContent = `当前状态：${preview.state} · ${preview.selected_skills} 个 Skills · 指令边界：${preview.instruction_profile_name || preview.instruction_profile || '标准边界'}`;
         const actions = (preview.actions || []).map(x => `<div class="preflight-item"><span class="preflight-icon">＋</span><span>将执行</span><span class="preflight-detail">${escapeHtml(x)}</span></div>`);
         const warningItems = preview.warnings || [];
         const warnings = warningItems.map(x => `<div class="preflight-item fail"><span class="preflight-icon">!</span><span>提醒</span><span class="preflight-detail">${escapeHtml(x)}</span></div>`);
-        $('preview-list').innerHTML = actions.concat(warnings).join('');
-        $('preview-confirm').textContent = conflict ? '覆盖修改并重新部署' : '确认部署';
-        $('preview-confirm').dataset.force = String(conflict);
-        $('preview-modal').style.display = 'flex';
+        scroller.innerHTML = actions.concat(warnings).join('');
+        scroller.scrollTop = 0;
+        confirm.textContent = conflict ? '覆盖修改并重新部署' : '确认部署';
+        confirm.dataset.force = String(conflict);
+        deploymentPreviewScrollGate?.destroy();
+        deploymentPreviewScrollGate = createScrollGate({
+            scroller,
+            button: confirm,
+            status: $('preview-scroll-status'),
+            resizeTarget: window,
+        });
+        deploymentPreviewScrollGate.lock();
+        deploymentPreviewPreviousFocus = document.activeElement;
+        modal.style.display = 'flex';
+        document.body.classList.add('modal-open');
+        requestAnimationFrame(() => {
+            const state = deploymentPreviewScrollGate?.update();
+            (state?.unlocked ? confirm : scroller).focus();
+        });
     } catch (e) {
         showConfigMessage(String(e), 'err');
     }
 }
 
-el.btnDeploy.addEventListener('click', deployWithPreview);
-$('preview-cancel')?.addEventListener('click', () => { $('preview-modal').style.display = 'none'; });
-$('preview-confirm')?.addEventListener('click', async () => {
-    const force = $('preview-confirm').dataset.force === 'true';
+function closeDeploymentPreview({ restoreFocus = true } = {}) {
     $('preview-modal').style.display = 'none';
+    document.body.classList.remove('modal-open');
+    deploymentPreviewScrollGate?.destroy();
+    deploymentPreviewScrollGate = null;
+    if (restoreFocus) {
+        const target = deploymentPreviewPreviousFocus?.isConnected ? deploymentPreviewPreviousFocus : el.btnDeploy;
+        requestAnimationFrame(() => target?.focus());
+    }
+    deploymentPreviewPreviousFocus = null;
+}
+
+el.btnDeploy.addEventListener('click', deployWithPreview);
+$('preview-cancel')?.addEventListener('click', () => closeDeploymentPreview());
+$('preview-confirm')?.addEventListener('click', async () => {
+    const confirm = $('preview-confirm');
+    if (confirm.disabled) {
+        $('preview-list').focus();
+        return;
+    }
+    const force = confirm.dataset.force === 'true';
+    closeDeploymentPreview({ restoreFocus: false });
     try {
         const msg = await invoke('deploy_bridge', { force });
         showConfigMessage(msg, 'ok');
         await refreshCodexInfo();
         await refreshHealth();
     } catch (e) { showConfigMessage(String(e), 'err'); }
+});
+
+document.addEventListener('keydown', event => {
+    if ($('preview-modal')?.style.display !== 'flex') return;
+    if (event.key === 'Escape') {
+        event.preventDefault();
+        closeDeploymentPreview();
+    }
 });
 
 $('btn-recover')?.addEventListener('click', async () => {

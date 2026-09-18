@@ -1,9 +1,10 @@
 {
   "name": "julong-codex-keysmith",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "scripts": {
     "tauri": "tauri",
     "prepare-sidecar": "node scripts/prepare-sidecar.mjs",
+    "test:scroll-gate": "node --test tests/scroll-gate.test.mjs",
     "dev": "tauri dev",
     "build": "node scripts/prepare-sidecar.mjs && tauri build --config src-tauri/tauri.sidecar.conf.json",
     "build:win": "node scripts/prepare-sidecar.mjs x86_64-pc-windows-msvc && tauri build --config src-tauri/tauri.sidecar.conf.json --target x86_64-pc-windows-msvc --no-bundle",
