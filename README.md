@@ -679,7 +679,7 @@ Claude Code 合并 `settings.json` 的 `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TO
 
 供应商“使用”、当前连接的 Key/地址/模型编辑，以及类内排序会更新已选且已部署的 Claude 客户端；未部署客户端等待下一次部署。未勾选客户端不修改。供应商切换后应重启 Claude，以加载新模型菜单和配置。运行中的请求由代理使用当前分类的 Key 转发。
 
-所有四份 Desktop 配置纳入同一部署事务和首次字节备份；选择 Claude Desktop 还原时包括同级 3P 目录，不影响未选 Claude Code。已有配置损坏、路径冲突、符号链接或部署后的外部改动会报错，避免覆盖。文件和备份含 API Key，沿用 macOS 私有文件权限与 Windows 用户目录权限。旧六客户端配置自动补入默认未勾选的 Desktop，保留原有选择。
+所有四份 Desktop 配置纳入同一部署事务和首次字节备份；选择 Claude Desktop 还原时包括同级 3P 目录，不影响未选 Claude Code。已有配置损坏、路径冲突或符号链接仍会报错；部署后的外部改动默认拒绝覆盖，但配置页会在预览中提供明确的“覆盖修改并部署”，还原区提供“覆盖修改并还原”，两者都保留事务恢复路径。文件和备份含 API Key，沿用 macOS 私有文件权限与 Windows 用户目录权限。旧六客户端配置自动补入默认未勾选的 Desktop，保留原有选择。
 
 macOS 继续使用 `build-macos.sh` 构建 Intel / Apple Silicon / Universal；Windows 目标机使用 `build-windows.ps1` 或 `build-windows.cmd` 生成 NSIS EXE 安装包。`build-windows.sh` 在 macOS 上仅负责其声明的交叉编译范围。本次代码编译进现有核心，没有新增打包资源或脚本，不自动重打包 App。检查及验证范围见 [v0.2.10 验证记录](docs/verification-0.2.10.md)。
 
@@ -704,3 +704,9 @@ Desktop `/v1/models` 返回与本地 profile 一致的角色目录；请求在�
 **模型映射不等于协议转换。** 当前上游仍需支持 Anthropic Messages（含流式和工具调用）；仅有 OpenAI Responses / Chat Completions 的服务不能只改模型名就使用。界面「验收 Claude 接口」发送一次短请求，使用兜底或首个已配置角色模型，不能替代所有模型权限与真实工具调用验收。
 
 版本已同步到 0.2.11。macOS / Windows 沿用现有构建和资源清单：本次不新增打包资源、不主动重打包 App；Windows 完整 NSIS EXE 仍应在 Windows 目标机运行 `build-windows.ps1` / `.cmd` 生成，macOS `build-windows.sh` 仅做其支持的交叉编译。验证记录见 [v0.2.11](docs/verification-0.2.11.md)。
+
+### v0.2.12：外部改动后的可重试部署
+
+修复部署文件被外部修改后的操作死锁：预览现在可以正常打开并显示冲突，确认按钮会明确标记为“覆盖修改并部署”；配置页在检测到冲突时显示“覆盖修改并还原”。普通部署和普通还原仍保护外部修改，只有用户明确确认覆盖才会进入强制事务路径；强制路径失败时仍可使用“恢复事务”。CLI 和启动代理继续使用默认保护逻辑，不会静默覆盖用户改动。
+
+验证覆盖默认冲突保护、显式强制重新部署、显式强制还原、未选客户端隔离与事务回滚。版本已同步到 0.2.12；本次不新增打包资源、不主动重打包 App。Windows 完整 NSIS EXE 仍应在 Windows 目标机运行 `build-windows.ps1` / `.cmd` 生成，macOS `build-windows.sh` 仅做其支持的交叉编译。

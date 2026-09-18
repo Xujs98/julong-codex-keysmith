@@ -458,3 +458,5 @@ body.modal-open{overflow:hidden}
 .provider-modal-header,.provider-modal-footer{flex-shrink:0}
 .provider-check-panel{padding:0 4px 12px}
 .provider-modal-card>.cfg-msg{flex-shrink:0;max-height:70px;overflow:auto;line-height:1.5;overflow-wrap:anywhere}
+/* Keep the conflict recovery action usable on narrow configuration panes. */
+.cfg-ops{flex-wrap:wrap}

@@ -156,5 +156,6 @@
         if (!ids.length) throw new Error('请先在客户端环境中勾选要还原的客户端');
         return ids;
     }
-    window.JulongEnvironments = { refresh, toggleProfile, selectedIds };
+    function state() { return snapshot; }
+    window.JulongEnvironments = { refresh, toggleProfile, selectedIds, state };
 })();

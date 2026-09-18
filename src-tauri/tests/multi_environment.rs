@@ -131,6 +131,30 @@ fn invalid_paths_missing_packs_conflicts_and_external_edits_fail_without_clobber
     assert!(environments::restore_at(&home).is_err());
     assert_eq!(fs::read(path).unwrap(), b"new user edits");
 }
+
+#[test]
+fn explicit_force_path_unblocks_external_edit_without_changing_default_protection() {
+    let f = Fixture::new();
+    let home = f.0.join("state");
+    let s = settings(&f);
+    let path = f.0.join("codex/AGENTS.md");
+    let original = b"user-owned codex instructions\n".to_vec();
+    fs::write(&path, &original).unwrap();
+    environments::deploy_at(&home, &s).unwrap();
+
+    fs::write(&path, b"external edit that must be explicitly replaced").unwrap();
+    assert!(environments::deploy_at(&home, &s).is_err());
+    environments::deploy_at_with_force(&home, &s, true).unwrap();
+    assert_ne!(
+        fs::read(&path).unwrap(),
+        b"external edit that must be explicitly replaced"
+    );
+
+    fs::write(&path, b"another external edit").unwrap();
+    assert!(environments::restore_selected_at(&home, &["codex".into()]).is_err());
+    environments::restore_selected_at_with_force(&home, &["codex".into()], true).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), original);
+}
 #[cfg(unix)]
 #[test]
 fn symlinked_native_targets_are_not_followed() {

@@ -592,8 +592,9 @@ async fn stop_proxy(
 }
 
 #[tauri::command]
-async fn deploy_bridge(app: tauri::AppHandle) -> Result<String, String> {
+async fn deploy_bridge(app: tauri::AppHandle, force: Option<bool>) -> Result<String, String> {
     tracing::info!("deploy_bridge: starting");
+    let force = force.unwrap_or(false);
     let manager = DeployManager::new().ok_or("Codex home not found")?;
     let skills_sync_message = if environments::codex_enabled() {
         skills::sync_enabled_skills(&app)?
@@ -619,7 +620,7 @@ async fn deploy_bridge(app: tauri::AppHandle) -> Result<String, String> {
     };
     let _ = base_bridge_md; // Native model packs are selected by the shared environment manager.
     environments::preview_at(&environments::state_home(), &environments::load()?)?;
-    let message = environments::deploy()?;
+    let message = environments::deploy_with_force(force)?;
     if environments::codex_enabled() {
         if let Err(error) = manager
             .apply_with_optional_skills(&environments::transport_bridge(manager.codex_home()), None)
@@ -634,8 +635,8 @@ async fn deploy_bridge(app: tauri::AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn restore_codex(environments: Vec<String>) -> Result<String, String> {
-    environments::restore_selected_configuration(&environments)
+async fn restore_codex(environments: Vec<String>, force: Option<bool>) -> Result<String, String> {
+    environments::restore_selected_configuration_with_force(&environments, force.unwrap_or(false))
 }
 
 /// 停止桌面/CLI 托管代理并恢复 Codex 的干净环境。
@@ -1013,7 +1014,19 @@ async fn get_deploy_status() -> Result<serde_json::Value, String> {
 
 #[tauri::command]
 async fn preview_deployment(_app: tauri::AppHandle) -> Result<environments::Preview, String> {
-    environments::preview_at(&environments::state_home(), &environments::load()?)
+    let mut preview =
+        environments::preview_at(&environments::state_home(), &environments::load()?)?;
+    if environments::snapshot()?
+        .get("deployment_conflict")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+    {
+        preview.state = "conflict".into();
+        preview
+            .warnings
+            .push("检测到部署后文件被外部修改；确认后将覆盖这些修改并重新部署。".into());
+    }
+    Ok(preview)
 }
 
 #[tauri::command]

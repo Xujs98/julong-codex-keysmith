@@ -603,7 +603,7 @@ fn check_integrity(old: &Manifest) -> Result<(), String> {
         }
         if read(&entry.path)?.as_deref().map(hash).as_deref() != Some(entry.after_sha256.as_str()) {
             return Err(format!(
-                "部署文件已被外部修改，请保留修改后再恢复: {}",
+                "部署文件已被外部修改，请先保留修改；可在部署预览中选择“覆盖修改并部署”，或在还原区选择“覆盖修改并还原”: {}",
                 entry.path.display()
             ));
         }
@@ -612,7 +612,11 @@ fn check_integrity(old: &Manifest) -> Result<(), String> {
 }
 pub fn preview_at(home: &Path, settings: &Settings) -> Result<Preview, String> {
     let old = manifest(home)?;
-    check_integrity(&old)?;
+    let _integrity_error = if old.entries.is_empty() {
+        None
+    } else {
+        check_integrity(&old).err()
+    };
     let provider = provider_at(home, settings)?;
     let writes = desired(settings, &old, provider.as_ref())?;
     let mut actions: Vec<_> = writes
@@ -628,10 +632,20 @@ pub fn preview_at(home: &Path, settings: &Settings) -> Result<Preview, String> {
     Ok(Preview { state: if old.entries.is_empty(){"ready"}else{"deployed"}.into(),actions,warnings:vec!["Codex、Claude Code 和 Claude Desktop 会自动配置本机网关；Claude Code 合并 settings.json，Claude Desktop 写入 3p 网关 profile。备份原配置并保留权限、MCP 和其它设置。请使用支持 Anthropic Messages 的供应商并在部署后启动代理、重启 Claude。其它客户端需自行设置 API 地址。部署不会安装或卸载客户端命令。".into()],selected_skills:0,instruction_profile_name:settings.profiles.join("、"),environments:settings.environments.iter().filter(|e|e.enabled).map(|e|e.id.clone()).collect() })
 }
 pub fn deploy_at(home: &Path, settings: &Settings) -> Result<String, String> {
+    deploy_at_with_force(home, settings, false)
+}
+
+pub fn deploy_at_with_force(
+    home: &Path,
+    settings: &Settings,
+    force: bool,
+) -> Result<String, String> {
     fs::create_dir_all(home).map_err(|e| e.to_string())?;
     recover_at(home)?;
     let old = manifest(home)?;
-    check_integrity(&old)?;
+    if !force {
+        check_integrity(&old)?;
+    }
     let provider = provider_at(home, settings)?;
     let writes = desired(settings, &old, provider.as_ref())?;
     apply_deployment(home, settings, old, writes)
@@ -789,10 +803,17 @@ fn partition_restore(old: &Manifest, ids: &[String]) -> Result<(Manifest, Manife
     Ok((restore, keep))
 }
 
-fn apply_restore(home: &Path, restore: Manifest, keep: Manifest) -> Result<(), String> {
+fn apply_restore(
+    home: &Path,
+    restore: Manifest,
+    keep: Manifest,
+    force: bool,
+) -> Result<(), String> {
     // Only selected files participate. An edit in an unselected client must not
     // prevent another client from being restored or overwrite its backup.
-    check_integrity(&restore)?;
+    if !force {
+        check_integrity(&restore)?;
+    }
     let mut snapshots = Vec::new();
     for e in &restore.entries {
         snapshots.push(Snapshot {
@@ -838,12 +859,20 @@ fn apply_restore(home: &Path, restore: Manifest, keep: Manifest) -> Result<(), S
 /// Full rollback is reserved for deployment failures and explicit internal cleanup.
 pub fn restore_at(home: &Path) -> Result<String, String> {
     recover_at(home)?;
-    apply_restore(home, manifest(home)?, Manifest::default())?;
+    apply_restore(home, manifest(home)?, Manifest::default(), false)?;
     Ok("全部环境部署已还原，原始文件字节已恢复".into())
 }
 
 /// Resolve ownership from the deployed manifest, not newly edited directory fields.
 pub fn restore_selected_at(home: &Path, ids: &[String]) -> Result<String, String> {
+    restore_selected_at_with_force(home, ids, false)
+}
+
+pub fn restore_selected_at_with_force(
+    home: &Path,
+    ids: &[String],
+    force: bool,
+) -> Result<String, String> {
     checked_ids(ids)?;
     if home.join(JOURNAL).exists() {
         return Err("存在未完成事务，请先点击恢复事务，再还原所选客户端".into());
@@ -851,7 +880,7 @@ pub fn restore_selected_at(home: &Path, ids: &[String]) -> Result<String, String
     let (restore, keep) = partition_restore(&manifest(home)?, ids)?;
     let count = restore.entries.len();
     if count > 0 {
-        apply_restore(home, restore, keep)?;
+        apply_restore(home, restore, keep, force)?;
     }
     let names = ids
         .iter()
@@ -867,6 +896,14 @@ pub fn restore_selected_at(home: &Path, ids: &[String]) -> Result<String, String
 
 /// Shared desktop / CLI operation, including Codex transport only when selected.
 pub fn restore_selected_configuration_at(home: &Path, ids: &[String]) -> Result<String, String> {
+    restore_selected_configuration_at_with_force(home, ids, false)
+}
+
+pub fn restore_selected_configuration_at_with_force(
+    home: &Path,
+    ids: &[String],
+    force: bool,
+) -> Result<String, String> {
     let selected = checked_ids(ids)?;
     let old = manifest(home)?;
     let settings = load_at(home)?;
@@ -884,8 +921,10 @@ pub fn restore_selected_configuration_at(home: &Path, ids: &[String]) -> Result<
         None
     };
     // Catch selected-file conflicts before invoking either restore pipeline.
-    check_integrity(&partition_restore(&old, ids)?.0)?;
-    let message = restore_selected_at(home, ids)?;
+    if !force {
+        check_integrity(&partition_restore(&old, ids)?.0)?;
+    }
+    let message = restore_selected_at_with_force(home, ids, force)?;
     if let Some(path) = codex_home {
         let result = crate::deploy::DeployManager::at(path)
             .restore()
@@ -896,14 +935,25 @@ pub fn restore_selected_configuration_at(home: &Path, ids: &[String]) -> Result<
 }
 
 pub fn restore_selected_configuration(ids: &[String]) -> Result<String, String> {
+    restore_selected_configuration_with_force(ids, false)
+}
+
+pub fn restore_selected_configuration_with_force(
+    ids: &[String],
+    force: bool,
+) -> Result<String, String> {
     let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
     if crate::runtime::port_is_listening() {
         return Err("请先停止代理再还原所选客户端，避免运行时仍使用旧会话".into());
     }
-    restore_selected_configuration_at(&state_home(), ids)
+    restore_selected_configuration_at_with_force(&state_home(), ids, force)
 }
 
 pub fn deploy() -> Result<String, String> {
+    deploy_with_force(false)
+}
+
+pub fn deploy_with_force(force: bool) -> Result<String, String> {
     let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
     let settings = load()?;
     if settings
@@ -914,7 +964,7 @@ pub fn deploy() -> Result<String, String> {
     {
         return Err("请先添加或选择 Claude 分类供应商，再部署 Claude Code / Desktop".into());
     }
-    deploy_at(&state_home(), &settings)
+    deploy_at_with_force(&state_home(), &settings, force)
 }
 pub fn restore() -> Result<String, String> {
     let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
@@ -933,9 +983,10 @@ pub fn snapshot() -> Result<serde_json::Value, String> {
     let s = load()?;
     let m = manifest(&state_home())?;
     let intact = check_integrity(&m).is_ok();
+    let deployment_conflict = !m.entries.is_empty() && !intact;
     let rows:Vec<_>=s.environments.iter().map(|e|serde_json::json!({"id":e.id,"name":metadata(&e.id).map(|v|v.0),"path":e.path,"enabled":e.enabled,"detected":!e.path.is_empty()&&Path::new(&e.path).is_dir(),"deployed":intact&&m.settings.as_ref().map(|d|d.environments.iter().any(|x|x.id==e.id&&x.enabled&&x.path==e.path)).unwrap_or(false)})).collect();
     Ok(
-        serde_json::json!({"settings":s,"environments":rows,"integrity_ok":intact,"transaction_pending":state_home().join(JOURNAL).exists(),"pending_changes":m.settings.as_ref().map(|d|serde_json::to_value(d).ok()!=serde_json::to_value(&s).ok()).unwrap_or(true)}),
+        serde_json::json!({"settings":s,"environments":rows,"integrity_ok":intact,"deployment_conflict":deployment_conflict,"transaction_pending":state_home().join(JOURNAL).exists(),"pending_changes":m.settings.as_ref().map(|d|serde_json::to_value(d).ok()!=serde_json::to_value(&s).ok()).unwrap_or(true)}),
     )
 }
 

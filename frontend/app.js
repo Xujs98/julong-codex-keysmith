@@ -41,6 +41,7 @@ const el = {
     btnRefresh:    $('btn-refresh'),
     btnDeploy:     $('btn-deploy'),
     btnRestore:    $('btn-restore'),
+    btnRestoreForce: $('btn-restore-force'),
     cfgCodexHome:  $('cfg-codex-home'),
     cfgProviderName: $('cfg-provider-name'),
     cfgBridgeStatus: $('cfg-bridge-status'),
@@ -728,6 +729,9 @@ $('log-next')?.addEventListener('click', () => { logPage++; renderLogPage(); });
 async function refreshCodexInfo() {
     try {
         await window.JulongEnvironments.refresh();
+        if (el.btnRestoreForce) {
+            el.btnRestoreForce.hidden = !window.JulongEnvironments.state()?.deployment_conflict;
+        }
         const info = await invoke('get_codex_info');
         el.cfgCodexHome.textContent = info.codex_home ?? '未检测到';
         await loadInstructionProfiles();
@@ -1069,10 +1073,14 @@ el.btnRefresh.addEventListener('click', refreshCodexInfo);
 async function deployWithPreview() {
     try {
         const preview = await invoke('preview_deployment');
+        const conflict = preview.state === 'conflict';
         $('preview-state').textContent = `当前状态：${preview.state} · ${preview.selected_skills} 个 Skills · 指令边界：${preview.instruction_profile_name || preview.instruction_profile || '标准边界'}`;
         const actions = (preview.actions || []).map(x => `<div class="preflight-item"><span class="preflight-icon">＋</span><span>将执行</span><span class="preflight-detail">${escapeHtml(x)}</span></div>`);
-        const warnings = (preview.warnings || []).map(x => `<div class="preflight-item fail"><span class="preflight-icon">!</span><span>提醒</span><span class="preflight-detail">${escapeHtml(x)}</span></div>`);
+        const warningItems = preview.warnings || [];
+        const warnings = warningItems.map(x => `<div class="preflight-item fail"><span class="preflight-icon">!</span><span>提醒</span><span class="preflight-detail">${escapeHtml(x)}</span></div>`);
         $('preview-list').innerHTML = actions.concat(warnings).join('');
+        $('preview-confirm').textContent = conflict ? '覆盖修改并重新部署' : '确认部署';
+        $('preview-confirm').dataset.force = String(conflict);
         $('preview-modal').style.display = 'flex';
     } catch (e) {
         showConfigMessage(String(e), 'err');
@@ -1082,9 +1090,10 @@ async function deployWithPreview() {
 el.btnDeploy.addEventListener('click', deployWithPreview);
 $('preview-cancel')?.addEventListener('click', () => { $('preview-modal').style.display = 'none'; });
 $('preview-confirm')?.addEventListener('click', async () => {
+    const force = $('preview-confirm').dataset.force === 'true';
     $('preview-modal').style.display = 'none';
     try {
-        const msg = await invoke('deploy_bridge');
+        const msg = await invoke('deploy_bridge', { force });
         showConfigMessage(msg, 'ok');
         await refreshCodexInfo();
         await refreshHealth();
@@ -1100,22 +1109,30 @@ $('btn-recover')?.addEventListener('click', async () => {
     } catch (e) { showConfigMessage(String(e), 'err'); }
 });
 
-el.btnRestore.addEventListener('click', async () => {
+async function restoreSelected(force = false) {
     try {
         const environments = window.JulongEnvironments.selectedIds();
         el.btnRestore.disabled = true;
-        el.btnRestore.textContent = '正在还原所选客户端…';
-        const msg = await invoke('restore_codex', { environments });
+        if (el.btnRestoreForce) el.btnRestoreForce.disabled = true;
+        el.btnRestore.textContent = force ? '正在覆盖并还原…' : '正在还原所选客户端…';
+        const msg = await invoke('restore_codex', { environments, force });
         showConfigMessage(msg, 'ok');
         await Promise.all([refreshCodexInfo(), refreshHealth(), window.JulongEnvironments.refresh()]);
     } catch (e) {
         showConfigMessage(String(e), 'err');
         await window.JulongEnvironments.refresh();
+        if (el.btnRestoreForce) {
+            el.btnRestoreForce.hidden = !window.JulongEnvironments.state()?.deployment_conflict;
+        }
     } finally {
         el.btnRestore.disabled = false;
         el.btnRestore.textContent = '还原配置';
+        if (el.btnRestoreForce) el.btnRestoreForce.disabled = false;
     }
-});
+}
+
+el.btnRestore.addEventListener('click', () => restoreSelected(false));
+el.btnRestoreForce?.addEventListener('click', () => restoreSelected(true));
 
 function showConfigMessage(msg, type) {
     el.cfgMessage.textContent = msg;
@@ -1882,7 +1899,7 @@ $('btn-skills-disable-all')?.addEventListener('click', async () => {
 
 $('btn-skills-redeploy')?.addEventListener('click', async () => {
     try {
-        const msg = await invoke('deploy_bridge');
+        const msg = await invoke('deploy_bridge', { force: false });
         showToast(msg, 'ok');
     } catch (e) {
         showToast(String(e), 'err');
