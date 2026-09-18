@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>矩龙破甲 · v0.2.10</title>
+    <title>矩龙破甲 · v0.2.11</title>
     <link rel="stylesheet" href="styles.css">
     <script type="module" src="app.js"></script>
 </head>
@@ -14,7 +14,7 @@
     <div class="tb-logo" data-tauri-drag-region>
         <img class="tb-logo-image" src="assets/molong-logo.png" alt="矩龙破甲" data-tauri-drag-region>
         <span class="tb-logo-text" data-tauri-drag-region>矩龙破甲</span>
-        <span class="tb-logo-sub" data-tauri-drag-region>Desktop Edition · v0.2.10</span>
+        <span class="tb-logo-sub" data-tauri-drag-region>Desktop Edition · v0.2.11</span>
     </div>
     <div class="tb-spacer" data-tauri-drag-region></div>
     <button class="tb-btn" id="tb-minimize" title="最小化">—</button>
@@ -230,7 +230,7 @@
             <div class="dash-pad">
                 <section class="hero-card">
                     <div class="hero-copy">
-                        <div class="eyebrow">矩龙破甲 · v0.2.10</div>
+                        <div class="eyebrow">矩龙破甲 · v0.2.11</div>
                         <h1>把每一次交互，<span>变成可控能力。</span></h1>
                         <p>本地代理、指令增强与 Skills 工作流集中管理。数据留在本机，状态一目了然。</p>
                         <div class="hero-actions">
@@ -529,13 +529,21 @@
             <section class="provider-form-section provider-model-section">
                 <div class="provider-section-head"><span>03</span><div><strong>模型配置</strong><small>手动填写或从供应商拉取可用模型</small></div></div>
                 <div class="provider-form-grid">
-                    <div class="field field-span-2 model-field"><div class="field-label-row"><span>默认模型</span><span class="field-hint">下载后可从列表直接选择</span></div><div class="model-line"><input id="provider-default-model" class="cfg-input" placeholder="gpt-5.6-sol" autocomplete="off"><button class="model-download" id="btn-provider-models" type="button" title="下载模型列表"><span aria-hidden="true">↓</span><b>下载模型</b></button></div><div class="model-picker" id="provider-model-picker" hidden><button class="model-picker-trigger" id="provider-model-trigger" type="button" aria-expanded="false"><span id="provider-model-value">选择已下载模型</span><span class="model-picker-chevron" aria-hidden="true">⌄</span></button><div class="model-picker-menu" id="provider-model-menu" role="listbox"></div></div></div>
+                    <div id="provider-claude-mapping" class="field-span-2" hidden>
+                        <div class="claude-mapping-toolbar"><strong>模型映射</strong><button class="btn" type="button" id="provider-mapping-fill">一键设置为兜底模型</button></div>
+                        <p class="claude-mapping-help">显示名称用于模型菜单；实际请求模型可以是 gpt-6-astra 等供应商模型。1M 仅声明上下文能力，不会提升上游限制。</p>
+                        <div id="provider-mapping-rows"></div>
+                    </div>
+                    <div class="field field-span-2 model-field"><div class="field-label-row"><span id="provider-default-label">默认模型</span><span class="field-hint">下载后可从列表直接选择</span></div><div class="model-line"><input id="provider-default-model" class="cfg-input" placeholder="gpt-5.6-sol" autocomplete="off"><button class="model-download" id="btn-provider-models" type="button" title="下载模型列表"><span aria-hidden="true">↓</span><b>下载模型</b></button></div><div class="model-picker" id="provider-model-picker" hidden><button class="model-picker-trigger" id="provider-model-trigger" type="button" aria-expanded="false"><span id="provider-model-value">选择已下载模型</span><span class="model-picker-chevron" aria-hidden="true">⌄</span></button><div class="model-picker-menu" id="provider-model-menu" role="listbox"></div></div></div>
+                    <div id="provider-claude-fallback" class="field-span-2" hidden><label class="claude-one-m"><input type="checkbox" id="provider-default-1m">声明兜底模型支持 1M</label><p class="claude-mapping-help">未命中角色的请求使用兜底模型；留空则保留原模型名。Fable 留空时优先使用 Opus。Subagent 仅供 Code 子代理使用，不显示在模型菜单。</p></div>
                     <select id="provider-model" hidden><option value="">使用默认模型</option></select>
                 </div>
             </section>
+            <div class="provider-check-panel">
+                <p class="provider-modal-subtitle" id="provider-claude-hint" hidden>Claude Code / Desktop 通过角色映射使用供应商模型；不要求实际模型名以 claude- 开头。供应商必须支持 Anthropic Messages，仅支持 OpenAI Responses / Chat Completions 的地址不能直接使用。部署及切换会同步已选且已部署的 Claude 客户端。</p>
+                <button class="btn" id="btn-provider-claude-test" type="button" hidden>验收 Claude 接口（发送一次短请求）</button>
+            </div>
         </div>
-        <p class="provider-modal-subtitle" id="provider-claude-hint" hidden>Claude Code / Desktop 需要 Anthropic Messages 接口及 Claude 模型。默认模型或下载列表须包含 claude-sonnet-*、claude-opus-* 或 claude-haiku-*。部署及切换会同步已选且已部署的 Claude 客户端。</p>
-        <button class="btn" id="btn-provider-claude-test" type="button" hidden>验收 Claude 接口（发送一次短请求）</button>
         <div class="cfg-msg" id="provider-modal-message" role="status" aria-live="polite"></div>
         <div class="provider-modal-footer"><button class="btn provider-cancel" id="provider-modal-cancel">取消</button><button class="btn btn-red solid provider-save" id="provider-modal-save">保存供应商</button></div>
     </div>

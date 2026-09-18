@@ -98,23 +98,7 @@ pub fn targets(root: &Path) -> Result<Vec<(PathBuf, FileKind)>, String> {
 }
 
 pub fn models(provider: &Provider) -> Vec<String> {
-    let mut result = Vec::new();
-    for model in std::iter::once(&provider.default_model).chain(provider.models.iter()) {
-        let model = model.trim();
-        let tail = model.strip_prefix("anthropic/").unwrap_or(model);
-        if ["claude-sonnet-", "claude-opus-", "claude-haiku-"]
-            .iter()
-            .any(|prefix| {
-                tail.strip_prefix(prefix)
-                    .is_some_and(|rest| !rest.is_empty())
-            })
-            && !model.contains(['[', ']'])
-            && !result.iter().any(|m| m == model)
-        {
-            result.push(model.to_string());
-        }
-    }
-    result
+    crate::claude_models::upstream_models(provider)
 }
 
 pub fn render(
@@ -138,9 +122,9 @@ pub fn render(
             if provider.api_key.trim().is_empty() {
                 return Err("Claude Desktop 供应商 API Key 不能为空".into());
             }
-            let models = models(provider);
+            let models = crate::claude_models::desktop_models(provider);
             if models.is_empty() {
-                return Err("Claude Desktop 需要供应商默认模型或模型列表包含 claude-sonnet-*、claude-opus-* 或 claude-haiku-*；中转须支持 Anthropic Messages".into());
+                return Err("Claude Desktop 需要至少一个角色映射或默认兜底模型（可使用 gpt-6-astra 等上游模型）；供应商须支持 Anthropic Messages".into());
             }
             for (key, value) in [
                 ("inferenceProvider", json!("gateway")),

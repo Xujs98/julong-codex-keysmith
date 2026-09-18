@@ -47,7 +47,10 @@ impl ActivationGate {
             .and_then(|h| h.to_str().ok())
             .map(str::to_string)
             .unwrap_or_else(|| {
-                if model.contains("claude") {
+                if model.contains("claude")
+                    || (crate::claude::messages_path(path)
+                        && headers.contains_key("x-claude-code-session-id"))
+                {
                     "claude"
                 } else if model.contains("grok") {
                     "grok"
@@ -236,7 +239,14 @@ fn activation_text(headers: &HeaderMap, body: &Value, path: &str) -> Option<Stri
     if path.split('?').next()?.ends_with("/messages")
         && headers.contains_key("x-claude-code-session-id")
     {
-        let last = body.get("messages")?.as_array()?.last()?;
+        // Native Code's non-Claude model adapter can append system context after
+        // the user message. Skip only system roles, never assistant/tool history.
+        let last = body
+            .get("messages")?
+            .as_array()?
+            .iter()
+            .rev()
+            .find(|message| message.get("role").and_then(Value::as_str) != Some("system"))?;
         if last.get("role")?.as_str()? != "user" {
             return None;
         }
@@ -254,6 +264,7 @@ fn activation_text(headers: &HeaderMap, body: &Value, path: &str) -> Option<Stri
                 return text_parts(&json!([parts.last()?]));
             }
         }
+        return text_parts(last.get("content")?);
     }
     latest_text(body)
 }
@@ -367,6 +378,40 @@ fn wire_reply(path: &str, body: &Value, text: &str) -> axum::response::Response 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn mapped_native_model_trailing_system_preserves_exact_trigger_boundary() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-claude-code-session-id",
+            "mapped-native-session".parse().unwrap(),
+        );
+        let trailing = json!({"role":"system","content":[{"type":"text","text":"# Environment"}]});
+        let mut gate = ActivationGate::new(BTreeMap::from([("claude".into(), "PACK".into())]));
+        let body = json!({"model":"gpt-6-astra[1M]","messages":[{"role":"user","content":"矩龙"},trailing]});
+        assert_eq!(
+            activation_text(&headers, &body, "/v1/messages").as_deref(),
+            Some(WORD)
+        );
+        assert_eq!(
+            gate.identity(&headers, &body, "/v1/messages").unwrap().0,
+            "claude"
+        );
+        assert!(gate
+            .local_response(&headers, &body, "/v1/messages")
+            .is_some());
+        assert!(activation_text(&HeaderMap::new(), &body, "/v1/messages").is_none());
+        for last in [
+            json!({"role":"assistant","content":"矩龙"}),
+            json!({"role":"tool","content":"矩龙"}),
+            json!({"role":"user","content":[{"type":"image","source":{}},{"type":"text","text":"矩龙"}]}),
+            json!({"role":"user","content":"历史示例：矩龙"}),
+        ] {
+            let body = json!({"model":"gpt-6-astra","messages":[{"role":"user","content":"矩龙"},last,trailing]});
+            assert!(gate
+                .local_response(&headers, &body, "/v1/messages")
+                .is_none());
+        }
+    }
     #[test]
     fn claude_native_reminders_do_not_hide_exact_current_user_word() {
         let mut headers = HeaderMap::new();

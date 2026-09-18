@@ -35,6 +35,8 @@ pub struct Provider {
     #[serde(default)]
     pub models: Vec<String>,
     #[serde(default)]
+    pub claude_models: Option<crate::claude_models::ModelMapping>,
+    #[serde(default)]
     pub last_latency_ms: Option<u64>,
     #[serde(default)]
     pub last_status: String,
@@ -182,6 +184,7 @@ pub fn load_or_migrate(home: &Path) -> Result<Vec<Provider>, String> {
         let p = Provider {
             id: Uuid::new_v4().to_string(),
             category: default_category(),
+            claude_models: None,
             name: "默认供应商".into(),
             note: "从现有中转站配置迁移".into(),
             official_url: String::new(),
@@ -645,6 +648,7 @@ mod tests {
         Provider {
             id: "provider-1".into(),
             category: "openai".into(),
+            claude_models: None,
             name: "主力供应商".into(),
             note: String::new(),
             official_url: String::new(),
@@ -770,7 +774,7 @@ pub async fn test_claude(provider: &Provider) -> Result<String, String> {
     let model = crate::claude_desktop::models(provider)
         .into_iter()
         .next()
-        .ok_or("请先填写 Claude 默认模型或下载包含 Claude 的模型列表")?;
+        .ok_or("请先填写默认兜底模型或 Claude 角色的实际请求模型")?;
     if provider.api_key.trim().is_empty() {
         return Err("请先填写 API Key".into());
     }

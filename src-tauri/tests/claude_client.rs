@@ -81,6 +81,15 @@ async fn run_native_client(desktop: bool) {
                     body["metadata"],
                     headers.keys().collect::<Vec<_>>()
                 );
+                assert!(body["messages"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|m| m["role"] != "system"));
+                assert_eq!(
+                    body["model"], "gpt-6-astra",
+                    "native model must be mapped without the 1M marker"
+                );
                 record.lock().unwrap().push((
                     body.to_string().contains("NATIVE_CLAUDE_TEST_PACK"),
                     headers.get("x-api-key").and_then(|h| h.to_str().ok())
@@ -95,7 +104,7 @@ async fn run_native_client(desktop: bool) {
     let up = tokio::spawn(async move {
         axum::serve(listener, upstream).await.unwrap();
     });
-    let provider: julong_codex_keysmith::providers::Provider = serde_json::from_value(json!({"id":"native-test", "category":"claude", "name":"native-test", "request_url":format!("http://{upstream_addr}"), "api_key":"dummy-relay-key"})).unwrap();
+    let provider: julong_codex_keysmith::providers::Provider = serde_json::from_value(json!({"id":"native-test", "category":"claude", "name":"native-test", "request_url":format!("http://{upstream_addr}"), "api_key":"dummy-relay-key", "default_model":"gpt-6-astra[1M]"})).unwrap();
     let core = Arc::new(
         MitmCore::builder()
             .target("http://unused.invalid")
@@ -117,7 +126,7 @@ async fn run_native_client(desktop: bool) {
     let settings = f.0.join("home/.claude/settings.json");
     let bytes = if desktop {
         use julong_codex_keysmith::{claude_desktop, providers::Provider};
-        let provider: Provider = serde_json::from_value(json!({"id":"fixture", "category":"claude", "name":"fixture", "request_url":"http://127.0.0.1", "api_key":"dummy-desktop-key", "default_model":"claude-sonnet-4-6"})).unwrap();
+        let provider: Provider = serde_json::from_value(json!({"id":"fixture", "category":"claude", "name":"fixture", "request_url":"http://127.0.0.1", "api_key":"dummy-desktop-key", "default_model":"gpt-6-astra[1M]"})).unwrap();
         let profile: Value = serde_json::from_slice(
             &claude_desktop::render(claude_desktop::FileKind::Profile, None, &provider).unwrap(),
         )
@@ -127,7 +136,7 @@ async fn run_native_client(desktop: bool) {
         // Use an isolated port while preserving the generated route namespace.
         serde_json::to_vec(&json!({"env":{"ANTHROPIC_BASE_URL":format!("http://{addr}/claude-desktop"), "ANTHROPIC_AUTH_TOKEN":profile["inferenceGatewayApiKey"]}})).unwrap()
     } else {
-        claude::render_settings(None, &format!("http://{addr}")).unwrap()
+        claude::render_provider_settings(None, &format!("http://{addr}"), Some(&provider)).unwrap()
     };
     fs::write(&settings, bytes).unwrap();
     let session = uuid::Uuid::new_v4().to_string();
@@ -154,7 +163,11 @@ async fn run_native_client(desktop: bool) {
                 "--output-format",
                 "json",
                 "--model",
-                "claude-sonnet-4-6",
+                if desktop {
+                    "claude-sonnet-4-6"
+                } else {
+                    "gpt-6-astra[1M]"
+                },
                 "--tools",
                 "",
                 "--strict-mcp-config",

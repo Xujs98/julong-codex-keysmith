@@ -1,6 +1,7 @@
 pub mod activation;
 pub mod claude;
 pub mod claude_desktop;
+pub mod claude_models;
 pub mod environments;
 pub mod upstream;
 // Super-Instruct — Tauri 桌面应用入口
@@ -1060,6 +1061,7 @@ async fn save_provider(
             || p.full_url != provider.full_url
             || p.default_model != provider.default_model
             || p.models != provider.models
+            || p.claude_models != provider.claude_models
     });
     let mut predicted = list.clone();
     if let Some(item) = predicted.iter_mut().find(|p| p.id == provider.id) {
@@ -1628,6 +1630,9 @@ async fn handle_proxy(
         .map(|pq| pq.to_string())
         .unwrap_or_else(|| parts.uri.path().to_string());
 
+    if let Some(response) = core.catalog_response(&parts.method, &path_and_query).await {
+        return response;
+    }
     if let Some(response) = core.local_response(&parts.headers, &bytes, &path_and_query) {
         return response;
     }
@@ -2129,6 +2134,7 @@ mod proxy_tests {
     fn provider_with_models(models: &[&str]) -> providers::Provider {
         providers::Provider {
             category: "openai".into(),
+            claude_models: None,
             id: "provider-1".into(),
             name: "Test provider".into(),
             note: String::new(),

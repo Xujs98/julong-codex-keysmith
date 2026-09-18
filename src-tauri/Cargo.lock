@@ -2012,7 +2012,7 @@ dependencies = [
 
 [[package]]
 name = "julong-codex-keysmith"
-version = "0.2.10"
+version = "0.2.11"
 dependencies = [
  "axum",
  "bytes",

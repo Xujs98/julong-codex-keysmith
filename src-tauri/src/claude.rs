@@ -79,22 +79,33 @@ pub fn render_provider_settings(
             json!(provider.api_key.trim()),
         );
         env.remove("ANTHROPIC_API_KEY");
-        // Select Claude models only; a shared Codex default must not overwrite them.
-        let models = crate::claude_desktop::models(provider);
-        if let Some(model) = models.first() {
-            env.insert("ANTHROPIC_MODEL".into(), json!(model));
-            for (role, key) in [
-                ("sonnet", "ANTHROPIC_DEFAULT_SONNET_MODEL"),
-                ("opus", "ANTHROPIC_DEFAULT_OPUS_MODEL"),
-                ("haiku", "ANTHROPIC_DEFAULT_HAIKU_MODEL"),
-            ] {
-                let chosen = models
-                    .iter()
-                    .find(|m| m.contains(&format!("claude-{role}-")))
-                    .unwrap_or(model);
-                env.insert(key.into(), json!(chosen));
+        let mapping = crate::claude_models::effective(provider);
+        for role in crate::claude_models::ROLES {
+            let key = crate::claude_models::env_key(role);
+            let name_key = format!("{key}_NAME");
+            env.remove(key);
+            env.remove(&name_key);
+            let row = mapping.row(role);
+            if !row.model.trim().is_empty() {
+                env.insert(key.into(), json!(row.client_model()));
+                if role != "subagent" && !row.display_name.trim().is_empty() {
+                    env.insert(name_key, json!(row.display_name.trim()));
+                }
             }
-            object.insert("model".into(), json!(model));
+        }
+        env.remove("ANTHROPIC_SMALL_FAST_MODEL");
+        env.remove("ANTHROPIC_MODEL");
+        if !provider.default_model.trim().is_empty() {
+            let fallback = crate::claude_models::ModelSlot {
+                model: provider.default_model.clone(),
+                supports_1m: mapping.default_1m,
+                ..Default::default()
+            }
+            .client_model();
+            env.insert("ANTHROPIC_MODEL".into(), json!(fallback));
+            object.insert("model".into(), json!(fallback));
+        } else {
+            object.remove("model");
         }
     }
     let mut bytes = serde_json::to_vec_pretty(&value).map_err(|e| e.to_string())?;
@@ -105,4 +116,44 @@ pub fn render_provider_settings(
 pub fn messages_path(path: &str) -> bool {
     let path = path.split('?').next().unwrap_or(path);
     path.ends_with("/messages") || path.ends_with("/messages/count_tokens")
+}
+
+/// Code may emit separate system-role messages for non-Claude model IDs.
+/// Anthropic Messages requires these blocks in the top-level system field.
+pub fn normalize_native_system_messages(body: &mut Value) -> Result<(), String> {
+    let Some(messages) = body.get("messages").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    if !messages.iter().any(|m| m["role"] == "system") {
+        return Ok(());
+    }
+    let mut system = Vec::new();
+    let mut append = |content: &Value| -> Result<(), String> {
+        match content {
+            Value::String(text) => system.push(json!({"type":"text","text":text})),
+            Value::Array(blocks)
+                if blocks
+                    .iter()
+                    .all(|b| b["type"] == "text" && b["text"].is_string()) =>
+            {
+                system.extend(blocks.iter().cloned())
+            }
+            _ => return Err("Claude system 消息必须为文本或文本块".into()),
+        }
+        Ok(())
+    };
+    if let Some(original) = body.get("system") {
+        append(original)?;
+    }
+    let mut retained = Vec::new();
+    for message in messages {
+        if message["role"] == "system" {
+            append(&message["content"])?;
+        } else {
+            retained.push(message.clone());
+        }
+    }
+    body["system"] = json!(system);
+    body["messages"] = json!(retained);
+    Ok(())
 }

@@ -657,7 +657,7 @@ Windows 目标机将 `JULONG_CLAUDE_TEST_BIN` 设为原生 `claude.exe` 完整�
 
 使用流程：
 
-1. 在供应商页面选择 **Claude**，添加或编辑供应商，填 API 基础地址、Key，以及 `claude-sonnet-*`、`claude-opus-*` 或 `claude-haiku-*` 默认模型/模型列表。中转站必须支持 **Anthropic Messages**；本项目没有添加 OpenAI→Anthropic 协议转换。
+1. 在供应商页面选择 **Claude**，添加或编辑供应商，填 API 基础地址、Key 和默认兜底模型；v0.2.11 起可为各角色设置任意供应商实际模型名（如 `gpt-6-astra`），不再要求 `claude-*` 前缀。中转站必须支持 **Anthropic Messages**；本项目没有添加 OpenAI→Anthropic 协议转换。
 2. 点击 **验收 Claude 接口（发送一次短请求）**。该操作向填写的供应商发出一次最多 16 输出 token 的真实请求，可能产生少量费用；验证 HTTP 成功及 Messages 响应结构。原有“测试连接”仅检查 `/models`，不能证明推理可用。
 3. 点击该 Claude 供应商的“使用”。在配置管理勾选 **Claude Code**、**Claude Desktop** 或两者，同时选择 **Claude Code / Desktop** 模型指令。
 4. 识别或手动设置客户端配置目录，预览后部署、启动代理，再完整退出并重启 Claude 客户端。Desktop 需要支持第三方网关的版本；本机核对版本为 2.2553.0。
@@ -682,3 +682,25 @@ Claude Code 合并 `settings.json` 的 `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TO
 所有四份 Desktop 配置纳入同一部署事务和首次字节备份；选择 Claude Desktop 还原时包括同级 3P 目录，不影响未选 Claude Code。已有配置损坏、路径冲突、符号链接或部署后的外部改动会报错，避免覆盖。文件和备份含 API Key，沿用 macOS 私有文件权限与 Windows 用户目录权限。旧六客户端配置自动补入默认未勾选的 Desktop，保留原有选择。
 
 macOS 继续使用 `build-macos.sh` 构建 Intel / Apple Silicon / Universal；Windows 目标机使用 `build-windows.ps1` 或 `build-windows.cmd` 生成 NSIS EXE 安装包。`build-windows.sh` 在 macOS 上仅负责其声明的交叉编译范围。本次代码编译进现有核心，没有新增打包资源或脚本，不自动重打包 App。检查及验证范围见 [v0.2.10 验证记录](docs/verification-0.2.10.md)。
+
+
+### v0.2.11：Claude 角色模型映射
+
+参照 cc-switch 的角色映射和 Desktop 本地路由机制，Claude 类供应商新增 Sonnet、Opus、Fable、Haiku、Subagent 的实际请求模型、菜单显示名称及默认兜底模型。Sonnet / Opus / Fable / Subagent / 兜底支持 1M 能力声明；Haiku 按图示不提供单独 1M 开关。Subagent 不显示在模型菜单。
+
+例如供应商提供 `gpt-6-astra` 的 Anthropic Messages 接口：编辑 Claude 供应商，在「默认兜底模型」填 `gpt-6-astra`，点击「一键设置为兜底模型」填满四档，按需单独配置 Subagent，再保存。也可下载模型列表，用每档输入框右侧下拉按钮选择。显示名称只影响菜单，不参与上游路由；1M 声明不会提高供应商实际上下文上限。检查接口后，部署所选 Claude 客户端、启动代理，并完全退出重启客户端。
+
+| 配置 | Claude Code | Claude Desktop / 代理 |
+| --- | --- | --- |
+| 四档角色 | `ANTHROPIC_DEFAULT_{SONNET,OPUS,FABLE,HAIKU}_MODEL` 及 `_NAME` | `inferenceModels` 写入 Claude 角色路由 ID、`labelOverride`、`supports1m` |
+| Subagent | `CLAUDE_CODE_SUBAGENT_MODEL` | 不生成独立菜单项 |
+| 默认兜底 | `ANTHROPIC_MODEL` 与顶层 `model` | 未命中角色时替换为兜底模型 |
+| 1M | 模型值的 `[1M]` 后缀 | profile 使用布尔声明；转发前剥离后缀 |
+
+Desktop `/v1/models` 返回与本地 profile 一致的角色目录；请求在转发前将角色名替换为实际模型，不会把 `gpt-*` 生硬写进 Desktop 的角色菜单。Fable 留空时优先回落到 Opus；其它未匹配请求使用兜底，兜底也留空时保留原模型名。Code 已替换成角色/Subagent 实际模型的请求不会再被兜底覆盖。保存当前供应商映射、切换供应商时同步已选且已部署客户端；还原仍保留首次备份。
+
+原生 Code 在使用非 Claude 模型时附加的 system 消息按 Anthropic 格式归入顶层 `system`；启用检测只检查最后一条非 system 消息，保留用户精确触发、历史/附件/工具不触发的边界。OpenAI / Codex 分类的路由和模型配置不受 Claude 映射影响。
+
+**模型映射不等于协议转换。** 当前上游仍需支持 Anthropic Messages（含流式和工具调用）；仅有 OpenAI Responses / Chat Completions 的服务不能只改模型名就使用。界面「验收 Claude 接口」发送一次短请求，使用兜底或首个已配置角色模型，不能替代所有模型权限与真实工具调用验收。
+
+版本已同步到 0.2.11。macOS / Windows 沿用现有构建和资源清单：本次不新增打包资源、不主动重打包 App；Windows 完整 NSIS EXE 仍应在 Windows 目标机运行 `build-windows.ps1` / `.cmd` 生成，macOS `build-windows.sh` 仅做其支持的交叉编译。验证记录见 [v0.2.11](docs/verification-0.2.11.md)。

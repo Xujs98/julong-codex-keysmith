@@ -846,6 +846,9 @@ async fn headless_handler(
         .path_and_query()
         .map(|value| value.to_string())
         .unwrap_or_else(|| parts.uri.path().to_string());
+    if let Some(response) = core.catalog_response(&parts.method, &path).await {
+        return response;
+    }
     if let Some(response) = core.local_response(&parts.headers, &bytes, &path) {
         return response;
     }

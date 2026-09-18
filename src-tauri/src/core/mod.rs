@@ -30,7 +30,7 @@ pub struct MitmCore {
 struct UpstreamTarget {
     url: String,
     anthropic_api_key: Option<String>,
-    claude: Option<(String, String)>,
+    claude: Option<crate::providers::Provider>,
     split_claude: bool,
     openai_available: bool,
 }
@@ -64,6 +64,31 @@ impl MitmCore {
             .local_response(&headers, &data, &path)
     }
 
+    /// Desktop must discover the same Claude-safe route IDs written to its profile.
+    pub async fn catalog_response(
+        &self,
+        method: &Method,
+        path: &str,
+    ) -> Option<axum::response::Response> {
+        use axum::response::IntoResponse;
+        if *method != Method::GET
+            || !matches!(
+                path.split('?').next()?,
+                "/claude-desktop/models" | "/claude-desktop/v1/models"
+            )
+        {
+            return None;
+        }
+        let target = self.target.read().await;
+        if !target.split_claude {
+            return None;
+        }
+        Some(match &target.claude {
+            Some(provider) => axum::Json(crate::claude_models::catalog(provider)).into_response(),
+            None => (http::StatusCode::SERVICE_UNAVAILABLE, axum::Json(serde_json::json!({"error":{"type":"configuration_error","message":"尚未配置 Claude 分类供应商"}}))).into_response(),
+        })
+    }
+
     pub async fn set_target(&self, target: impl Into<String>) {
         self.target.write().await.url = target.into();
     }
@@ -81,7 +106,7 @@ impl MitmCore {
     pub async fn update_category(&self, provider: &crate::providers::Provider) {
         let mut target = self.target.write().await;
         if provider.is_claude() {
-            target.claude = Some((provider.normalized_url(), provider.api_key.clone()));
+            target.claude = Some(provider.clone());
             target.split_claude = true;
         } else {
             target.url = provider.normalized_url();
@@ -109,11 +134,16 @@ impl MitmCore {
         let (headers, path_and_query) =
             crate::claude_desktop::normalize_request(&headers, &path_and_query);
         // Model discovery and other GET requests carry no JSON body.
-        let data: serde_json::Value = if body.is_empty() {
+        let mut data: serde_json::Value = if body.is_empty() {
             serde_json::json!({})
         } else {
             serde_json::from_slice(&body)?
         };
+        if crate::claude::messages_path(&path_and_query)
+            && headers.contains_key("x-claude-code-session-id")
+        {
+            crate::claude::normalize_native_system_messages(&mut data)?;
+        }
         let user_msg = extract_user(&data);
         let category = categorize(&user_msg);
 
@@ -162,11 +192,24 @@ impl MitmCore {
             return Err("尚未配置 OpenAI / Codex 分类供应商".into());
         }
         let (url, anthropic_key) = if claude_request && target.split_claude {
-            let (url, key) = target
+            let provider = target
                 .claude
                 .as_ref()
                 .ok_or("尚未配置 Claude 分类供应商，请在供应商页面添加后选择使用")?;
-            (upstream_url(url, &path_and_query), Some(key.clone()))
+            if crate::claude::messages_path(&path_and_query) {
+                crate::claude_models::map_body(
+                    &mut req_ctx.body,
+                    provider,
+                    headers
+                        .get("x-julong-environment")
+                        .and_then(|h| h.to_str().ok())
+                        == Some("claude-desktop"),
+                );
+            }
+            (
+                upstream_url(&provider.normalized_url(), &path_and_query),
+                Some(provider.api_key.clone()),
+            )
         } else {
             (
                 upstream_url(&target.url, &path_and_query),
@@ -313,7 +356,7 @@ impl MitmCore {
 
 pub struct MitmCoreBuilder {
     openai_available: bool,
-    claude: Option<(String, String)>,
+    claude: Option<crate::providers::Provider>,
     split_claude: bool,
     activation: Option<crate::activation::ActivationGate>,
     target: Option<String>,
@@ -364,9 +407,7 @@ impl MitmCoreBuilder {
     }
     pub fn claude_provider(mut self, provider: Option<&crate::providers::Provider>) -> Self {
         self.split_claude = true;
-        self.claude = provider
-            .filter(|p| p.is_claude())
-            .map(|p| (p.normalized_url(), p.api_key.clone()));
+        self.claude = provider.filter(|p| p.is_claude()).cloned();
         self
     }
 

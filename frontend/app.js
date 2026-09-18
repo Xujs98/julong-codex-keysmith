@@ -1362,6 +1362,7 @@ function populateModelPicker(models = [], selected = '') {
     menu.querySelectorAll('.model-option').forEach(option => option.addEventListener('click', () => {
         const model = option.dataset.model;
         $('provider-default-model').value = model;
+        $('provider-default-1m').checked = /\[1m\]$/i.test(model.trim());
         select.value = model;
         value.textContent = model;
         menu.querySelectorAll('.model-option').forEach(item => { item.classList.toggle('selected', item === option); item.querySelector('i').textContent = item === option ? '✓' : ''; });
@@ -1381,6 +1382,7 @@ function openProviderModal(p = null) {
     $('provider-key-toggle').classList.remove('is-visible');
     $('provider-key-toggle').title = '显示 API Key';
     $('provider-key-toggle').setAttribute('aria-label', '显示 API Key');
+    renderClaudeMapping(p);
     populateModelPicker(p?.models || [], p?.default_model || '');
     $('provider-modal-message').textContent = ''; $('provider-modal').style.display = 'flex';
     requestAnimationFrame(() => $('provider-name').focus());
@@ -1392,7 +1394,7 @@ function closeProviderModal() {
     providerModalPreviousFocus?.focus?.();
     providerModalPreviousFocus = null;
 }
-function providerForm() { return { category: $('provider-category').value, id: $('provider-id').value, name: $('provider-name').value.trim(), note: $('provider-note').value.trim(), official_url: $('provider-official-url').value.trim(), api_key: $('provider-api-key').value.trim(), request_url: $('provider-request-url').value.trim(), full_url: $('provider-full-url').checked, default_model: $('provider-default-model').value.trim(), models: Array.from($('provider-model').options).slice(1).map(o => o.value).filter(Boolean) }; }
+function providerForm() { return { claude_models: readClaudeMapping(), category: $('provider-category').value, id: $('provider-id').value, name: $('provider-name').value.trim(), note: $('provider-note').value.trim(), official_url: $('provider-official-url').value.trim(), api_key: $('provider-api-key').value.trim(), request_url: $('provider-request-url').value.trim(), full_url: $('provider-full-url').checked, default_model: $('provider-default-model').value.trim(), models: Array.from($('provider-model').options).slice(1).map(o => o.value).filter(Boolean) }; }
 function renderProvidersFromState() { renderProviders(); }
 
 function openProviderDeleteModal(provider) {
@@ -1954,6 +1956,10 @@ function setProviderCategory(category) {
     const claude = category === 'claude';
     $('provider-api-hint').textContent = claude ? 'Anthropic Messages 的 API 基础地址，勿填写 /messages 端点' : 'OpenAI 兼容的 Responses API 基础地址';
     $('provider-default-model').placeholder = claude ? 'claude-sonnet-4-6' : 'gpt-5.6-sol';
+    $('provider-claude-mapping').hidden = !claude;
+    $('provider-claude-fallback').hidden = !claude;
+    document.querySelector('.provider-model-section').classList.toggle('has-claude-mapping', claude);
+    $('provider-default-label').textContent = claude ? '默认兜底模型' : '默认模型';
     $('provider-claude-hint').hidden = !claude;
     $('btn-provider-claude-test').hidden = !claude;
 }
@@ -1972,3 +1978,62 @@ document.querySelectorAll('[data-provider-filter]').forEach(button => button.add
     document.querySelectorAll('[data-provider-filter]').forEach(b => b.setAttribute('aria-pressed', String(b === button)));
     renderProviders();
 }));
+
+
+function claudeRoles() { return ['sonnet', 'opus', 'fable', 'haiku', 'subagent']; }
+function stripClaudeMarker(model = '') { return model.trim().replace(/\s*\[1m\]$/i, ''); }
+function renderClaudeMapping(provider) {
+    const mapping = provider?.claude_models;
+    const fallback = provider?.default_model || (provider?.models || []).find(Boolean) || '';
+    $('provider-default-1m').checked = !!mapping?.default_1m || /\[1m\]$/i.test((provider?.default_model || '').trim());
+    $('provider-mapping-rows').innerHTML = claudeRoles().map(role => {
+        const label = role[0].toUpperCase() + role.slice(1);
+        const legacy = role === 'subagent' ? '' : (provider?.models || []).find(m => m.includes(`claude-${role}-`)) || fallback;
+        const row = mapping?.[role] || (mapping ? {} : { model: legacy });
+        return `<div class="claude-mapping-row"><strong>${label}</strong>
+            <label>显示名称<input class="cfg-input" id="claude-${role}-name" aria-label="${label} 显示名称" value="${escapeHtml(row.display_name || '')}" placeholder="${role === 'subagent' ? '不显示在菜单' : '使用实际模型名称'}" ${role === 'subagent' ? 'disabled' : ''}></label>
+            <div class="claude-mapping-target"><label for="claude-${role}-model">实际请求模型</label><div class="claude-mapping-input"><input class="cfg-input" id="claude-${role}-model" aria-label="${label} 实际请求模型" value="${escapeHtml(stripClaudeMarker(row.model))}" placeholder="${role === 'subagent' ? '继承主模型' : '留空使用兜底'}"><button class="btn" type="button" data-model-role="${role}" aria-label="选择 ${label} 模型" aria-haspopup="listbox" aria-expanded="false" aria-controls="claude-${role}-options">⌄</button></div><div class="claude-model-options" id="claude-${role}-options" role="listbox" aria-label="${label} 可用模型" hidden></div></div>
+            ${role === 'haiku' ? '<span class="claude-one-m-placeholder"></span>' : `<label class="claude-one-m"><input type="checkbox" id="claude-${role}-1m" aria-label="${label} 支持 1M" ${row.supports_1m || /\[1m\]$/i.test((row.model || '').trim()) ? 'checked' : ''}>1M</label>`}</div>`;
+    }).join('');
+    $('provider-mapping-rows').querySelectorAll('[data-model-role]').forEach(button => button.addEventListener('click', () => openClaudeModelOptions(button)));
+}
+function readClaudeMapping() {
+    const mapping = { default_1m: $('provider-default-1m').checked };
+    claudeRoles().forEach(role => {
+        const raw = $(`claude-${role}-model`)?.value || '';
+        mapping[role] = { model: stripClaudeMarker(raw), display_name: $(`claude-${role}-name`)?.value.trim() || '', supports_1m: role !== 'haiku' && (!!$(`claude-${role}-1m`)?.checked || /\[1m\]$/i.test(raw.trim())) };
+    });
+    return mapping;
+}
+function closeClaudeModelOptions() {
+    document.querySelectorAll('.claude-model-options').forEach(menu => { menu.hidden = true; });
+    document.querySelectorAll('[data-model-role]').forEach(button => button.setAttribute('aria-expanded', 'false'));
+}
+function openClaudeModelOptions(button) {
+    const role = button.dataset.modelRole, menu = $(`claude-${role}-options`), wasOpen = !menu.hidden;
+    closeClaudeModelOptions();
+    if (wasOpen) return;
+    const models = Array.from($('provider-model').options).slice(1).map(o => o.value).filter(Boolean);
+    if (!models.length) { $('provider-modal-message').textContent = '请先点击「下载模型」，也可以直接输入实际请求模型。'; $(`claude-${role}-model`).focus(); return; }
+    menu.innerHTML = models.map(model => `<button type="button" role="option" aria-selected="${stripClaudeMarker(model) === $(`claude-${role}-model`).value}" data-model="${escapeHtml(model)}">${escapeHtml(model)}</button>`).join('');
+    menu.hidden = false; button.setAttribute('aria-expanded', 'true');
+    const options = [...menu.querySelectorAll('button')];
+    options.forEach((option, index) => {
+        option.addEventListener('click', () => { $(`claude-${role}-model`).value = stripClaudeMarker(option.dataset.model); if ($(`claude-${role}-1m`)) $(`claude-${role}-1m`).checked = /\[1m\]$/i.test(option.dataset.model.trim()); closeClaudeModelOptions(); $(`claude-${role}-model`).focus(); });
+        option.addEventListener('keydown', event => {
+            if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeClaudeModelOptions(); button.focus(); }
+            else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) { event.preventDefault(); const next = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length; options[next].focus(); }
+            else if (event.key === 'Tab') closeClaudeModelOptions();
+        });
+    });
+    options[0]?.focus();
+}
+$('provider-mapping-fill').addEventListener('click', () => {
+    const model = stripClaudeMarker($('provider-default-model').value);
+    if (!model) { $('provider-modal-message').textContent = '请先填写或选择默认兜底模型。'; $('provider-default-model').focus(); return; }
+    claudeRoles().filter(role => role !== 'subagent').forEach(role => {
+        $(`claude-${role}-model`).value = model; $(`claude-${role}-name`).value = model;
+        if ($(`claude-${role}-1m`)) $(`claude-${role}-1m`).checked = $('provider-default-1m').checked || /\[1m\]$/i.test($('provider-default-model').value.trim());
+    });
+    $('provider-modal-message').textContent = '已将 Sonnet、Opus、Fable、Haiku 设置为兜底模型；Subagent 保留单独配置。';
+});

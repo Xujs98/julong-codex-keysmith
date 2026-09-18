@@ -48,7 +48,7 @@ impl Fixture {
         }
     }
     fn provider(&self) -> Provider {
-        serde_json::from_value(json!({"id":"fixture", "category":"claude", "name":"fixture", "request_url":"http://127.0.0.1:19099", "api_key":"dummy-key-one", "default_model":"gpt-6-astra", "models":["gpt-6-astra","claude-sonnet-4-6","claude-haiku-4-5"]})).unwrap()
+        serde_json::from_value(json!({"id":"fixture", "category":"claude", "name":"fixture", "request_url":"http://127.0.0.1:19099", "api_key":"dummy-key-one", "default_model":"claude-sonnet-4-6", "models":["gpt-6-astra","claude-sonnet-4-6","claude-haiku-4-5"]})).unwrap()
     }
     fn save(&self) {
         environments::save_at(&self.state(), self.settings()).unwrap();
@@ -68,6 +68,55 @@ fn profile(f: &Fixture) -> PathBuf {
     f.root()
         .with_file_name("Claude-3p")
         .join(format!("configLibrary/{PROFILE_ID}.json"))
+}
+
+#[test]
+fn custom_role_mapping_redeploy_switch_and_restore_preserve_first_backup() {
+    let f = Fixture::new();
+    f.save();
+    let code_path = f.0.join("code/settings.json");
+    let original = br#"{"env":{"ANTHROPIC_DEFAULT_SONNET_MODEL_NAME":"original"},"permissions":{"allow":["Read"]}}"#;
+    fs::write(&code_path, original).unwrap();
+    let mut p = f.provider();
+    p.default_model = "gpt-6-astra".into();
+    p.models.clear();
+    p.claude_models = Some(
+        serde_json::from_value(json!({
+            "sonnet":{"model":"gpt-6-astra","display_name":"Astra 主力","supports_1m":true},
+            "opus":{"model":"deepseek-v4-pro"},"subagent":{"model":"small-model"}
+        }))
+        .unwrap(),
+    );
+    providers::save_list(&f.state().join("control"), &[p.clone()]).unwrap();
+    environments::deploy_at(&f.state(), &f.settings()).unwrap();
+    environments::deploy_at(&f.state(), &f.settings()).unwrap();
+    assert_eq!(
+        json_at(code_path.clone())["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+        "gpt-6-astra[1M]"
+    );
+    assert_eq!(
+        json_at(profile(&f))["inferenceModels"][0]["labelOverride"],
+        "Astra 主力"
+    );
+    p.claude_models.as_mut().unwrap().sonnet.model = "other-model".into();
+    p.claude_models
+        .as_mut()
+        .unwrap()
+        .sonnet
+        .display_name
+        .clear();
+    environments::sync_claude_provider_at(&f.state(), &p).unwrap();
+    assert_eq!(
+        json_at(profile(&f))["inferenceModels"][0]["labelOverride"],
+        "other-model"
+    );
+    assert!(json_at(code_path.clone())["env"]
+        .get("ANTHROPIC_DEFAULT_SONNET_MODEL_NAME")
+        .is_none());
+    environments::restore_selected_at(&f.state(), &["claude".into(), "claude-desktop".into()])
+        .unwrap();
+    assert_eq!(fs::read(code_path).unwrap(), original);
+    assert!(!profile(&f).exists());
 }
 
 #[test]
@@ -93,7 +142,12 @@ fn deploy_both_claudes_sync_selected_and_restore_original_bytes() {
     assert_eq!(p["inferenceGatewayApiKey"], "dummy-key-one");
     assert_eq!(
         p["inferenceModels"],
-        json!(["claude-sonnet-4-6", "claude-haiku-4-5"])
+        json!([
+            {"name":"claude-sonnet-4-6","labelOverride":"claude-sonnet-4-6","supports1m":false},
+            {"name":"claude-opus-4-6","labelOverride":"claude-sonnet-4-6","supports1m":false},
+            {"name":"claude-fable-5","labelOverride":"claude-sonnet-4-6","supports1m":false},
+            {"name":"claude-haiku-4-5","labelOverride":"claude-haiku-4-5","supports1m":false}
+        ])
     );
     assert!(p.get("coworkEgressAllowedHosts").is_none());
     assert_eq!(json_at(config.clone())["mcpServers"], json!({"user":{}}));
@@ -109,6 +163,7 @@ fn deploy_both_claudes_sync_selected_and_restore_original_bytes() {
     let mut provider = f.provider();
     provider.api_key = "dummy-key-two".into();
     provider.models = vec!["claude-opus-4-6".into()];
+    provider.default_model = "claude-opus-4-6".into();
     environments::sync_claude_provider_at(&f.state(), &provider).unwrap();
     assert_eq!(
         json_at(profile(&f))["inferenceGatewayApiKey"],
@@ -161,6 +216,7 @@ fn desktop_invalid_configs_models_paths_and_external_edits_fail_without_overwrit
     fs::remove_file(&meta).unwrap();
     let mut p = f.provider();
     p.models.clear();
+    p.default_model.clear();
     assert!(claude_desktop::render(FileKind::Profile, None, &p).is_err());
     p = f.provider();
     p.api_key.clear();
