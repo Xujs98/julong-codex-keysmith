@@ -476,3 +476,5 @@ body.modal-open{overflow:hidden}
 .provider-modal-card>.cfg-msg{flex-shrink:0;max-height:70px;overflow:auto;line-height:1.5;overflow-wrap:anywhere}
 /* Keep the conflict recovery action usable on narrow configuration panes. */
 .cfg-ops{flex-wrap:wrap}
+
+.lab-evidence-notes{margin:10px 0;color:var(--text-secondary);font-size:12px;line-height:1.6;overflow-wrap:anywhere}.lab-evidence-notes p{margin:4px 0}

@@ -13,7 +13,7 @@ Rust/Tauri production runtime.
 5. Deploy approved or explicitly released snapshots through the existing Rust
    transaction, MITM proxy, monitoring, and rollback path.
 
-The bundled banks were generated from
+The original banks were generated from
 MDX-Tom/gpt-instruct@0ad8ec58e1989f4a058e01ce4e15cf226e8067bf.
 The source generator ZIP hashes are:
 
@@ -34,3 +34,40 @@ CODEX_HOME/instruction-lab/; bundled resources remain read-only.
 
 The upstream-generated data and accompanying source material use the MIT license
 preserved in LICENSE.gpt-instruct.
+
+## Current and historical methods
+
+The current catalog and issue bank track upstream commit
+`3ab84df64468bb74cc9eb4e5423660083953c44f`. Eight English biology cases now use
+`max_chars=0`; upstream's runner no longer classifies missing-data omission
+language in biology as a fiction failure. The updated runner also requires manual
+review of A results. Original ZIPs, continuation probes, JB tools, dependency
+pin and release documentation are retained in `upstream/`, with hashes in
+`upstream-manifest.json`. All ZIPs are inert resources; deployment never runs them.
+
+`legacy/` preserves the previous catalog and issue bank. Rust chooses the catalog
+by profile, so evidence for v45 and Astra v1 still validates against its original
+bank and method hashes. The original `evidence-template.json` remains compatible.
+Use the two named RC evidence templates for new profiles. Method hashes retain
+the existing application's ZIP-hash convention, rather than confusing ZIP hashes
+with hashes of extracted Python sources.
+
+The RC catalog stores non-cloud B coverage as 50 cases / 56 turns. Cloud repeated
+attempts are recorded separately in evidence notes, never added into a 66-case
+numerator. Both RCs have two fresh A runs with manual review and required-trio
+flags. Import requires two runs and those flags for a passing fresh run. Full B
+imports still require 66 cases / 74 turns. C remains not-run in bundled evidence.
+These are upstream document summaries; raw responses were not committed upstream.
+
+JB-A (20 cases) and JB-B (80 cases) remain separate from A/B/C. Upstream does not
+track its frozen `tests/jailbreakbench/source/`, banks or raw result directory in
+this snapshot. Therefore this integration includes the source tools only and
+reports no official labels or ASR. Before an external isolated JB run, obtain the
+exact frozen data specified by `build_jailbreakbench_splits.py` and verify hashes;
+without the exact judge backend results stay unjudged. No credentials or model
+calls are needed for this project's resource and Rust checks.
+
+For standalone evaluation, extract the ZIP scripts together into a disposable
+checkout outside runtime resource directories; generate banks there and follow
+`upstream/README.md`. Do not run model evaluators in the user's live Codex home.
+Existing provider, activation and rollback logic remains in Rust.

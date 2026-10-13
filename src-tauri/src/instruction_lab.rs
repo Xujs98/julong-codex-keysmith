@@ -11,6 +11,9 @@ use std::path::{Path, PathBuf};
 const RELEASE_CATALOG_JSON: &str = include_str!("../../instruction-lab/release-catalog.json");
 const ISSUE_BANK_JSONL: &str = include_str!("../../instruction-lab/banks/issue-regression.jsonl");
 const PROMPT_BANK_JSONL: &str = include_str!("../../instruction-lab/banks/prompt-medium.jsonl");
+const LEGACY_CATALOG_JSON: &str = include_str!("../../instruction-lab/legacy/release-catalog.json");
+const LEGACY_ISSUE_BANK_JSONL: &str =
+    include_str!("../../instruction-lab/legacy/issue-regression.jsonl");
 const LAB_DIR: &str = "instruction-lab";
 const FEEDBACK_FILE: &str = "feedback.json";
 
@@ -92,6 +95,10 @@ struct ReleaseRecord {
     release_status: String,
     release_decision: String,
     production_deployable: bool,
+    #[serde(default)]
+    required_fresh_a_runs: usize,
+    #[serde(default)]
+    evidence_notes: Vec<String>,
     evidence: EvidenceSet,
 }
 
@@ -104,6 +111,10 @@ pub struct StageEvidence {
     pub artifacts_passed: usize,
     pub artifacts_total: usize,
     pub status: String,
+    #[serde(default)]
+    pub manual_reviewed: bool,
+    #[serde(default)]
+    pub required_trio_passed: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -114,6 +125,8 @@ pub struct EvidenceSet {
     pub b: StageEvidence,
     #[serde(rename = "C")]
     pub c: StageEvidence,
+    #[serde(default)]
+    pub fresh_a_runs: Vec<StageEvidence>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -187,6 +200,9 @@ pub struct GateReport {
     pub release_status: String,
     pub release_decision: String,
     pub evidence_origin: String,
+    pub evidence_notes: Vec<String>,
+    pub source_commit: String,
+    pub fresh_a_runs: Vec<StageEvidence>,
     pub source_sha256: String,
     pub expected_source_sha256: String,
     pub source_bytes: usize,
@@ -248,6 +264,37 @@ fn schema_version() -> u32 {
 fn catalog() -> Result<ReleaseCatalog, String> {
     serde_json::from_str(RELEASE_CATALOG_JSON)
         .map_err(|error| format!("解析指令实验室发布清单失败: {error}"))
+}
+
+fn legacy_catalog() -> Result<ReleaseCatalog, String> {
+    serde_json::from_str(LEGACY_CATALOG_JSON)
+        .map_err(|error| format!("解析历史发布清单失败: {error}"))
+}
+fn catalog_for(profile: &str) -> Result<ReleaseCatalog, String> {
+    if matches!(
+        profile,
+        instruction::GPT56_PROFILE | instruction::GPT6_ASTRA_PROFILE
+    ) {
+        legacy_catalog()
+    } else {
+        catalog()
+    }
+}
+fn issue_source(catalog: &ReleaseCatalog) -> &'static str {
+    if catalog.source.commit == "0ad8ec58e1989f4a058e01ce4e15cf226e8067bf" {
+        LEGACY_ISSUE_BANK_JSONL
+    } else {
+        ISSUE_BANK_JSONL
+    }
+}
+fn fresh_a_passed(release: &ReleaseRecord, evidence: &EvidenceSet, gate: &GateDefinition) -> bool {
+    release.required_fresh_a_runs == 0
+        || (evidence.fresh_a_runs.len() == release.required_fresh_a_runs
+            && evidence.fresh_a_runs.iter().all(|run| {
+                run.manual_reviewed
+                    && run.required_trio_passed
+                    && stage_status("A", gate, run).passed
+            }))
 }
 
 fn sha256_bytes(bytes: &[u8]) -> String {
@@ -498,6 +545,15 @@ fn validate_imported(
     {
         return Err("证据缺少 run_id 或 generated_at".to_string());
     }
+    if imported.evidence.fresh_a_runs.len() != release.required_fresh_a_runs {
+        return Err("A fresh run 数量与发布方法不匹配".into());
+    }
+    for run in &imported.evidence.fresh_a_runs {
+        validate_stage("A fresh", run, &catalog.gates.a)?;
+        if run.status == "pass" && (!run.manual_reviewed || !run.required_trio_passed) {
+            return Err("A fresh 通过需要人工复核及 required trio 证据".into());
+        }
+    }
     validate_stage("A", &imported.evidence.a, &catalog.gates.a)?;
     validate_stage("B", &imported.evidence.b, &catalog.gates.b)?;
     validate_stage("C", &imported.evidence.c, &catalog.gates.c)
@@ -534,14 +590,14 @@ fn release_record<'a>(
 }
 
 fn build_report(home: Option<&Path>, profile_id: &str) -> Result<GateReport, String> {
-    let catalog = catalog()?;
+    let catalog = catalog_for(profile_id)?;
     let release = release_record(&catalog, profile_id)?;
     let profile =
         instruction::profile(profile_id).ok_or_else(|| format!("未知模型指令: {profile_id}"))?;
     let prompt = instruction::prompt_source(profile_id)
         .ok_or_else(|| format!("缺少指令源: {profile_id}"))?;
     let source_sha256 = sha256_bytes(prompt.as_bytes());
-    let issue_bank = bank_status(&catalog.banks.issue, ISSUE_BANK_JSONL, "family")?;
+    let issue_bank = bank_status(&catalog.banks.issue, issue_source(&catalog), "family")?;
     let prompt_bank = bank_status(&catalog.banks.prompt, PROMPT_BANK_JSONL, "scenario")?;
     let checks = structural_checks(prompt);
     let structural_passed = checks.iter().filter(|item| item.passed).count();
@@ -554,7 +610,8 @@ fn build_report(home: Option<&Path>, profile_id: &str) -> Result<GateReport, Str
         && issue_bank.languages.get("zh") == issue_bank.languages.get("en")
         && prompt_bank.languages.get("zh") == prompt_bank.languages.get("en");
     let (evidence, evidence_origin) = effective_evidence(home, release, &catalog)?;
-    let a = stage_status("A", &catalog.gates.a, &evidence.a);
+    let mut a = stage_status("A", &catalog.gates.a, &evidence.a);
+    a.passed &= fresh_a_passed(release, &evidence, &catalog.gates.a);
     let b = stage_status("B", &catalog.gates.b, &evidence.b);
     let c = stage_status("C", &catalog.gates.c, &evidence.c);
     let hard_gate_complete = a.passed && b.passed && c.passed;
@@ -605,6 +662,13 @@ fn build_report(home: Option<&Path>, profile_id: &str) -> Result<GateReport, Str
         reasoning: release.reasoning.clone(),
         release_status: release.release_status.clone(),
         release_decision: release.release_decision.clone(),
+        evidence_notes: if evidence_origin == "bundled-release" {
+            release.evidence_notes.clone()
+        } else {
+            Vec::new()
+        },
+        source_commit: catalog.source.commit.clone(),
+        fresh_a_runs: evidence.fresh_a_runs.clone(),
         evidence_origin,
         source_sha256,
         expected_source_sha256: release.source_sha256.clone(),
@@ -649,12 +713,14 @@ pub fn ensure_deployable(profile_id: &str) -> Result<(), String> {
 
 pub fn snapshot(home: &Path) -> Result<LabSnapshot, String> {
     let catalog = catalog()?;
-    let issue_bank = bank_status(&catalog.banks.issue, ISSUE_BANK_JSONL, "family")?;
+    let issue_bank = bank_status(&catalog.banks.issue, issue_source(&catalog), "family")?;
     let prompt_bank = bank_status(&catalog.banks.prompt, PROMPT_BANK_JSONL, "scenario")?;
     let feedback_count = read_feedback(home)?.records.len();
-    let releases = catalog
+    let legacy = legacy_catalog()?;
+    let releases = legacy
         .releases
         .iter()
+        .chain(catalog.releases.iter())
         .map(|release| build_report(Some(home), &release.profile_id))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(LabSnapshot {
@@ -707,7 +773,7 @@ pub fn record_feedback(
     level: &str,
     summary: &str,
 ) -> Result<FeedbackRecord, String> {
-    let catalog = catalog()?;
+    let catalog = catalog_for(profile_id)?;
     release_record(&catalog, profile_id)?;
     const FAMILIES: &[&str] = &[
         "execution_completion",
@@ -753,7 +819,7 @@ pub fn import_evidence(home: &Path, source: &Path) -> Result<GateReport, String>
     let bytes = fs::read(source).map_err(|error| format!("读取证据文件失败: {error}"))?;
     let imported: ImportedEvidence =
         serde_json::from_slice(&bytes).map_err(|error| format!("解析证据文件失败: {error}"))?;
-    let catalog = catalog()?;
+    let catalog = catalog_for(&imported.profile_id)?;
     let release = release_record(&catalog, &imported.profile_id)?;
     validate_imported(&imported, release, &catalog)?;
     let prompt = instruction::prompt_source(&imported.profile_id)
@@ -780,9 +846,101 @@ mod tests {
     }
 
     #[test]
+    fn prereleases_preserve_partial_scopes_and_fresh_review() {
+        for (id, cases, turns) in [
+            (instruction::GPT6_ASTRA_V2_PROFILE, 42, 48),
+            (instruction::GPT61_SOL_PROFILE, 34, 40),
+        ] {
+            let report = build_report(None, id).unwrap();
+            assert_eq!(report.release_status, "prerelease");
+            assert!(report.source_integrity && report.bank_integrity && report.byte_budget_ok);
+            assert_eq!(report.structural_passed, report.structural_total);
+            assert_eq!(report.fresh_a_runs.len(), 2);
+            assert!(report.a.passed);
+            assert_eq!(
+                (
+                    report.b.evidence.cases_passed,
+                    report.b.evidence.cases_total
+                ),
+                (cases, 50)
+            );
+            assert_eq!(
+                (
+                    report.b.evidence.turns_passed,
+                    report.b.evidence.turns_total
+                ),
+                (turns, 56)
+            );
+            assert!(!report.b.scope_matches && !report.b.passed);
+            assert!(!report.hard_gate_complete);
+            assert!(report.production_deployable);
+            assert!(ensure_deployable(id).is_ok());
+        }
+    }
+
+    #[test]
+    fn current_evidence_cannot_skip_fresh_review_or_reuse_old_methods() {
+        let current = catalog().unwrap();
+        let release = release_record(&current, instruction::GPT6_ASTRA_V2_PROFILE).unwrap();
+        let mut imported: ImportedEvidence = serde_json::from_str(include_str!(
+            "../../instruction-lab/evidence-template-gpt-6-astra-v2-rc1.json"
+        ))
+        .unwrap();
+        imported.run_id = "fresh-review-test".into();
+        imported.generated_at = Utc::now().to_rfc3339();
+        assert!(validate_imported(&imported, release, &current).is_ok());
+        imported.evidence.a = release.evidence.a.clone();
+        imported.evidence.fresh_a_runs = release.evidence.fresh_a_runs.clone();
+        assert!(validate_imported(&imported, release, &current).is_ok());
+        imported.evidence.fresh_a_runs[1].manual_reviewed = false;
+        assert!(validate_imported(&imported, release, &current)
+            .unwrap_err()
+            .contains("人工复核"));
+        assert!(!fresh_a_passed(
+            release,
+            &imported.evidence,
+            &current.gates.a
+        ));
+        imported.evidence.fresh_a_runs = vec![release.evidence.a.clone()];
+        assert!(validate_imported(&imported, release, &current)
+            .unwrap_err()
+            .contains("数量"));
+        imported.evidence.fresh_a_runs = release.evidence.fresh_a_runs.clone();
+        imported.issue_runner_sha256 = legacy_catalog().unwrap().methods.issue.runner_sha256;
+        assert!(validate_imported(&imported, release, &current)
+            .unwrap_err()
+            .contains("方法身份"));
+    }
+
+    #[test]
+    fn snapshot_keeps_historical_evidence_and_updated_bank_separate() {
+        let home = test_home();
+        let snapshot = snapshot(&home).unwrap();
+        assert_eq!(snapshot.releases.len(), 4);
+        assert_ne!(snapshot.releases[0].source_commit, snapshot.source_commit);
+        let old = catalog_for(instruction::GPT6_ASTRA_PROFILE).unwrap();
+        let current = catalog_for(instruction::GPT6_ASTRA_V2_PROFILE).unwrap();
+        assert_ne!(old.banks.issue.sha256, current.banks.issue.sha256);
+        for line in ISSUE_BANK_JSONL.lines() {
+            let row: serde_json::Value = serde_json::from_str(line).unwrap();
+            if row["family"] == "biology_research" && row["language"] == "en" {
+                assert_eq!(row["turns"][0]["max_chars"], 0);
+            }
+        }
+        assert_eq!(
+            build_report(None, instruction::GPT6_ASTRA_PROFILE)
+                .unwrap()
+                .b
+                .evidence
+                .cases_passed,
+            52
+        );
+    }
+
+    #[test]
     fn bundled_banks_have_expected_scope_and_language_balance() {
         let catalog = catalog().unwrap();
-        let issue = bank_status(&catalog.banks.issue, ISSUE_BANK_JSONL, "family").unwrap();
+        let issue = bank_status(&catalog.banks.issue, issue_source(&catalog), "family").unwrap();
         let prompt = bank_status(&catalog.banks.prompt, PROMPT_BANK_JSONL, "scenario").unwrap();
         assert!(issue.integrity_ok);
         assert_eq!((issue.cases, issue.turns), (66, 74));

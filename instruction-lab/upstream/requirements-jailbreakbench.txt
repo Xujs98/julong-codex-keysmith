@@ -1,0 +1,2 @@
+# Exact visible-response window used by the Codex target adapter.
+tiktoken==0.12.0

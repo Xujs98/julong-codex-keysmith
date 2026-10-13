@@ -12,6 +12,11 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
 fi
 
 for required_file in \
+  instruction-packs/gpt-6-astra-v2-rc1.md \
+  instruction-packs/gpt-6.1-sol-v1-rc2.md \
+  instruction-lab/legacy/release-catalog.json \
+  instruction-lab/legacy/issue-regression.jsonl \
+  instruction-lab/upstream-manifest.json \
   instruction-lab/release-catalog.json \
   instruction-lab/evidence-template.json \
   instruction-lab/LICENSE.gpt-instruct \

@@ -245,7 +245,10 @@ pub fn codex_enabled() -> bool {
 }
 pub fn family(profile: &str) -> &str {
     match profile {
-        "gpt-6-astra-v1" | "gpt-5.6-sol-v45" => "codex",
+        instruction::GPT6_ASTRA_PROFILE
+        | instruction::GPT56_PROFILE
+        | instruction::GPT6_ASTRA_V2_PROFILE
+        | instruction::GPT61_SOL_PROFILE => "codex",
         p if p.starts_with("astra-") => &p[6..],
         _ => "boundary",
     }
@@ -1006,6 +1009,36 @@ pub fn transport_bridge(home: &Path) -> String {
 #[cfg(test)]
 mod selection_tests {
     use super::*;
+
+    #[test]
+    fn new_codex_packs_route_to_codex_and_conflict_with_older_versions() {
+        let mut settings = Settings {
+            schema_version: 1,
+            environments: IDS
+                .iter()
+                .map(|id| Environment {
+                    id: (*id).into(),
+                    enabled: *id == "codex",
+                    path: String::new(),
+                })
+                .collect(),
+            profiles: Vec::new(),
+        };
+        for id in [
+            instruction::GPT6_ASTRA_V2_PROFILE,
+            instruction::GPT61_SOL_PROFILE,
+        ] {
+            assert_eq!(family(id), "codex");
+            settings.profiles = vec![id.into()];
+            assert_eq!(selected_pack(&settings, "codex"), Some(id));
+            let packs = gate_packs(&settings).unwrap();
+            assert!(packs["codex"].contains(&format!("instruction-profile:{id}")));
+            settings
+                .profiles
+                .push(instruction::GPT6_ASTRA_PROFILE.into());
+            assert!(validate(&settings).unwrap_err().contains("同一模型"));
+        }
+    }
 
     #[test]
     fn unchecking_codex_keeps_its_transport_but_native_only_deploy_does_not_pin_a_moved_path() {

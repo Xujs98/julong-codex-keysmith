@@ -2,7 +2,7 @@
   "schema_version": 1,
   "source": {
     "repository": "https://github.com/MDX-Tom/gpt-instruct.git",
-    "commit": "0ad8ec58e1989f4a058e01ce4e15cf226e8067bf",
+    "commit": "3ab84df64468bb74cc9eb4e5423660083953c44f",
     "license": "MIT"
   },
   "banks": {
@@ -10,7 +10,7 @@
       "id": "issue-bank",
       "quality_contract": "semantic-completion",
       "path": "banks/issue-regression.jsonl",
-      "sha256": "1e0afb07ce386ce8ca8ba24662f2900657ccb2a4afd106a3c0d5968bb0ef541b",
+      "sha256": "8f0e2fd6ef278fa756e0c0dc0c043ab972c06218138711e466bcda9bfa66eacb",
       "cases": 66,
       "turns": 74
     },
@@ -27,8 +27,8 @@
     "issue": {
       "id": "issue-regression-run",
       "transport": "plaintext",
-      "runner_sha256": "e3666401b1bf98cb205c34761906321bf537826ee2638dcfb4e3a614b3f3fda9",
-      "scorer_sha256": "bcf5b3b66ff92663f7b1e8d5c1d0337ab48cacf8652b94a70bcba7f815dfaee3"
+      "runner_sha256": "6e1ac373a0b351cc7c9e1ec56a3042129f8719e7c8b45eeeb1f2a012c566b1ee",
+      "scorer_sha256": "fd98e8c6959c3616cf260b7a3f2b58bdf891f9e0427f2dbefabd253b38a74fd8"
     },
     "prompt": {
       "id": "prompt-bank-run",
@@ -65,31 +65,41 @@
   },
   "releases": [
     {
-      "profile_id": "gpt-5.6-sol-v45",
-      "model": "gpt-5.6-sol",
+      "profile_id": "gpt-6-astra-v2-rc1",
+      "model": "gpt-6-astra",
       "reasoning": "medium",
-      "source_sha256": "c71c50e2f7a303b5eebc2b24c0b1ca0d9c753e3240db05c3e472c679907898f7",
-      "source_bytes": 5170,
+      "source_sha256": "d6976b90b399b9e11df9430dd3663072288f1d858a4910b1e9d5109b3ae7e660",
+      "source_bytes": 7931,
       "max_bytes": 8000,
-      "release_status": "stable",
-      "release_decision": "stable_release_with_current_gate_gaps",
+      "release_status": "prerelease",
+      "release_decision": "optional_prerelease_with_recorded_gate_gaps",
       "production_deployable": true,
+      "required_fresh_a_runs": 2,
+      "evidence_notes": [
+        "A：两次 fresh 均 3/4，required trio 与 2/2 technical artifacts 通过。",
+        "B 非云五族：42/50 cases、48/56 turns；云端三次重复：23/48 attempts、29/54 turns。",
+        "B 整体工件：16/16。不同范围不合并为 66-case 成绩；C 未运行。",
+        "来源为上游发布文档摘要；未随仓库发布原始模型响应。",
+        "JB-A/JB-B 独立于 A/B/C；缺少冻结数据与原始结果，官方标签和 ASR 保持未知。"
+      ],
       "evidence": {
         "A": {
-          "cases_passed": 2,
+          "cases_passed": 3,
           "cases_total": 4,
-          "turns_passed": 2,
+          "turns_passed": 3,
           "turns_total": 4,
           "artifacts_passed": 2,
           "artifacts_total": 2,
-          "status": "partial"
+          "status": "pass",
+          "manual_reviewed": true,
+          "required_trio_passed": true
         },
         "B": {
-          "cases_passed": 54,
-          "cases_total": 66,
-          "turns_passed": 62,
-          "turns_total": 74,
-          "artifacts_passed": 12,
+          "cases_passed": 42,
+          "cases_total": 50,
+          "turns_passed": 48,
+          "turns_total": 56,
+          "artifacts_passed": 16,
           "artifacts_total": 16,
           "status": "partial"
         },
@@ -101,19 +111,51 @@
           "artifacts_passed": 0,
           "artifacts_total": 0,
           "status": "not_run"
-        }
+        },
+        "fresh_a_runs": [
+          {
+            "cases_passed": 3,
+            "cases_total": 4,
+            "turns_passed": 3,
+            "turns_total": 4,
+            "artifacts_passed": 2,
+            "artifacts_total": 2,
+            "status": "pass",
+            "manual_reviewed": true,
+            "required_trio_passed": true
+          },
+          {
+            "cases_passed": 3,
+            "cases_total": 4,
+            "turns_passed": 3,
+            "turns_total": 4,
+            "artifacts_passed": 2,
+            "artifacts_total": 2,
+            "status": "pass",
+            "manual_reviewed": true,
+            "required_trio_passed": true
+          }
+        ]
       }
     },
     {
-      "profile_id": "gpt-6-astra-v1",
-      "model": "gpt-6-astra",
+      "profile_id": "gpt-6.1-sol-v1-rc2",
+      "model": "gpt-6.1-sol",
       "reasoning": "medium",
-      "source_sha256": "39fb46d6edc75963677fd92828dcb6c66dce11740b432efda3af9a683158ce16",
-      "source_bytes": 7495,
+      "source_sha256": "37382fb7082652e5b18c99fa5086fbc6d414993eaeae2ec7852ba372b031acac",
+      "source_bytes": 7575,
       "max_bytes": 8000,
-      "release_status": "formal",
-      "release_decision": "formal_release_with_recorded_gate_exception",
+      "release_status": "prerelease",
+      "release_decision": "optional_prerelease_with_recorded_gate_gaps",
       "production_deployable": true,
+      "required_fresh_a_runs": 2,
+      "evidence_notes": [
+        "A：两次 fresh 均 3/4，required trio 与 2/2 technical artifacts 通过。",
+        "B 非云五族：34/50 cases、40/56 turns；云端三次重复：22/48 attempts、28/54 turns。",
+        "B 整体工件：15/16。不同范围不合并为 66-case 成绩；C 未运行。",
+        "来源为上游发布文档摘要；未随仓库发布原始模型响应。",
+        "JB-A/JB-B 独立于 A/B/C；缺少冻结数据与原始结果，官方标签和 ASR 保持未知。"
+      ],
       "evidence": {
         "A": {
           "cases_passed": 3,
@@ -122,13 +164,15 @@
           "turns_total": 4,
           "artifacts_passed": 2,
           "artifacts_total": 2,
-          "status": "pass"
+          "status": "pass",
+          "manual_reviewed": true,
+          "required_trio_passed": true
         },
         "B": {
-          "cases_passed": 52,
-          "cases_total": 66,
-          "turns_passed": 60,
-          "turns_total": 74,
+          "cases_passed": 34,
+          "cases_total": 50,
+          "turns_passed": 40,
+          "turns_total": 56,
           "artifacts_passed": 15,
           "artifacts_total": 16,
           "status": "partial"
@@ -141,7 +185,31 @@
           "artifacts_passed": 0,
           "artifacts_total": 0,
           "status": "not_run"
-        }
+        },
+        "fresh_a_runs": [
+          {
+            "cases_passed": 3,
+            "cases_total": 4,
+            "turns_passed": 3,
+            "turns_total": 4,
+            "artifacts_passed": 2,
+            "artifacts_total": 2,
+            "status": "pass",
+            "manual_reviewed": true,
+            "required_trio_passed": true
+          },
+          {
+            "cases_passed": 3,
+            "cases_total": 4,
+            "turns_passed": 3,
+            "turns_total": 4,
+            "artifacts_passed": 2,
+            "artifacts_total": 2,
+            "status": "pass",
+            "manual_reviewed": true,
+            "required_trio_passed": true
+          }
+        ]
       }
     }
   ]

@@ -30,6 +30,10 @@ esac
 
 [[ "$(uname -s)" == "Darwin" ]] || { echo "Run this script on macOS."; exit 1; }
 
+for required_file in instruction-packs/gpt-6-astra-v2-rc1.md instruction-packs/gpt-6.1-sol-v1-rc2.md instruction-lab/legacy/release-catalog.json instruction-lab/legacy/issue-regression.jsonl instruction-lab/upstream-manifest.json; do
+  [[ -f "$required_file" ]] || { echo "Missing instruction resource: $required_file"; exit 1; }
+done
+
 # Finder 和非交互 Shell 通常没有加载 nvm。
 if ! command -v node >/dev/null 2>&1; then
   NVM_NODE_BIN="$(find "${HOME}/.nvm/versions/node" -maxdepth 3 -type f -path '*/bin/node' -print 2>/dev/null | sort | tail -n 1 | xargs -n 1 dirname 2>/dev/null || true)"

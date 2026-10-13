@@ -1,0 +1,255 @@
+{
+  "repository": "https://github.com/MDX-Tom/gpt-instruct.git",
+  "commit": "3ab84df64468bb74cc9eb4e5423660083953c44f",
+  "previous_commit": "0ad8ec58e1989f4a058e01ce4e15cf226e8067bf",
+  "files": [
+    {
+      "upstream_path": "gpt-6-astra-v2-rc1.zip",
+      "archive_sha256": "5c1d96f9aee25393af60245ac6c40b7850f641083a5162cad85762beedd6fc9d",
+      "path": "instruction-packs/gpt-6-astra-v2-rc1.md",
+      "sha256": "d6976b90b399b9e11df9430dd3663072288f1d858a4910b1e9d5109b3ae7e660",
+      "bytes": 7931
+    },
+    {
+      "upstream_path": "gpt-6.1-sol-v1-rc2.zip",
+      "archive_sha256": "007b8c5858110b809e5b90cd2c18bdc6965246aaee5af170b5487818b7055364",
+      "path": "instruction-packs/gpt-6.1-sol-v1-rc2.md",
+      "sha256": "37382fb7082652e5b18c99fa5086fbc6d414993eaeae2ec7852ba372b031acac",
+      "bytes": 7575
+    },
+    {
+      "upstream_path": "scripts/build_jailbreakbench_splits.zip",
+      "path": "instruction-lab/upstream/scripts/build_jailbreakbench_splits.zip",
+      "sha256": "c8bf6f97617b59e8825221e4aae596d8d70c31445d127dc788bb1e85e585b01e",
+      "bytes": 5126
+    },
+    {
+      "upstream_path": "scripts/build_jb_e8_e9_metrics.zip",
+      "path": "instruction-lab/upstream/scripts/build_jb_e8_e9_metrics.zip",
+      "sha256": "d44333a8bae76ffd849b3a1a6ff9145ce0ba989a978693e6057db0cd9b0e7292",
+      "bytes": 4926
+    },
+    {
+      "upstream_path": "scripts/codex_test_isolation.zip",
+      "path": "instruction-lab/upstream/scripts/codex_test_isolation.zip",
+      "sha256": "e7c241571a9d86046ac3e3ec17be89dd10b16881a69f64f35b07e20440764b50",
+      "bytes": 1821
+    },
+    {
+      "upstream_path": "scripts/collect_issue_version_matrix.zip",
+      "path": "instruction-lab/upstream/scripts/collect_issue_version_matrix.zip",
+      "sha256": "6ce90e8532b5b5e605db0a0376a0445107ad90b42c9f9ee7c17e1baca34331cd",
+      "bytes": 2475
+    },
+    {
+      "upstream_path": "scripts/collect_prompt_comparison.zip",
+      "path": "instruction-lab/upstream/scripts/collect_prompt_comparison.zip",
+      "sha256": "5577fbcb6760ba9d612d61a246099ea3f46fededfe3f76dcf36accb89186c58a",
+      "bytes": 1956
+    },
+    {
+      "upstream_path": "scripts/compare_gpt56_sol_issue_regression.zip",
+      "path": "instruction-lab/upstream/scripts/compare_gpt56_sol_issue_regression.zip",
+      "sha256": "44269062221c506a05c63acb0a22b72d44268c252b6e6dc14168ac2158afd24c",
+      "bytes": 1626
+    },
+    {
+      "upstream_path": "scripts/generate_gpt56_sol_generalization_bank.zip",
+      "path": "instruction-lab/upstream/scripts/generate_gpt56_sol_generalization_bank.zip",
+      "sha256": "eb8dc48f51f65224d1b8e0bfd7c4a2a4b177c38b6d2fd3d258ff39476fd8b07c",
+      "bytes": 3430
+    },
+    {
+      "upstream_path": "scripts/generate_gpt56_sol_issue_regression_bank.zip",
+      "path": "instruction-lab/upstream/scripts/generate_gpt56_sol_issue_regression_bank.zip",
+      "sha256": "d5e6b01b8c06d248c16ccea7fc9a209e4cb984da9236002c7a1642339a0b645e",
+      "bytes": 15933
+    },
+    {
+      "upstream_path": "scripts/generate_gpt56_sol_prompt_bank.zip",
+      "path": "instruction-lab/upstream/scripts/generate_gpt56_sol_prompt_bank.zip",
+      "sha256": "693521bda2e90d36c5c93fe60de8fb127d3f055c2e8d43ed0fdc38bcdd1206b2",
+      "bytes": 18266
+    },
+    {
+      "upstream_path": "scripts/generate_gpt56_sol_safety_eval.zip",
+      "path": "instruction-lab/upstream/scripts/generate_gpt56_sol_safety_eval.zip",
+      "sha256": "de3b954f5ead67f0ade6e90e735e71c20e4ab41c7cf429b7b3319dd8e6623b85",
+      "bytes": 2902
+    },
+    {
+      "upstream_path": "scripts/generate_issue_version_trend_svg.zip",
+      "path": "instruction-lab/upstream/scripts/generate_issue_version_trend_svg.zip",
+      "sha256": "6ecfa15e03e17d352a9af9e653024a0717cb9c436ec5dea9081f3a3c84804995",
+      "bytes": 2989
+    },
+    {
+      "upstream_path": "scripts/generate_v36_optimization_report.zip",
+      "path": "instruction-lab/upstream/scripts/generate_v36_optimization_report.zip",
+      "sha256": "dfaa072234b9abdb0e739ac62afc77f5a0c5c8a1b2baad6561f9fb6d4ba0ba90",
+      "bytes": 7986
+    },
+    {
+      "upstream_path": "scripts/generate_v41_optimization_report.zip",
+      "path": "instruction-lab/upstream/scripts/generate_v41_optimization_report.zip",
+      "sha256": "a4e18e5d563fef60f72ffa2e6fb48b094916cc0d46f53dc227c01b3e14f2e43f",
+      "bytes": 9027
+    },
+    {
+      "upstream_path": "scripts/generate_version_pass_trend_svg.zip",
+      "path": "instruction-lab/upstream/scripts/generate_version_pass_trend_svg.zip",
+      "sha256": "0ad266d5f303885c7cd3bdc2071132e61a3e439996380a164cc9325a415940a3",
+      "bytes": 3317
+    },
+    {
+      "upstream_path": "scripts/judge_jailbreakbench.zip",
+      "path": "instruction-lab/upstream/scripts/judge_jailbreakbench.zip",
+      "sha256": "a9a5f38ae2082fa414667878907d4f37103860228409b3376daaa7e993da248b",
+      "bytes": 4602
+    },
+    {
+      "upstream_path": "scripts/repair_prompt_bank_run.zip",
+      "path": "instruction-lab/upstream/scripts/repair_prompt_bank_run.zip",
+      "sha256": "e9b2b93359c0fb07ed8606fdeac2bf6dd86440ad089ed3f8abc4a79959bca641",
+      "bytes": 2492
+    },
+    {
+      "upstream_path": "scripts/rescore_issue_regression_run.zip",
+      "path": "instruction-lab/upstream/scripts/rescore_issue_regression_run.zip",
+      "sha256": "86d0477451f82d4a3b3d710ae78689fd98173fc9a11fc69263612af1c0418357",
+      "bytes": 1999
+    },
+    {
+      "upstream_path": "scripts/review_jailbreakbench.zip",
+      "path": "instruction-lab/upstream/scripts/review_jailbreakbench.zip",
+      "sha256": "864e86cd49fb5cb429bdb8290199a2c4f0a20313dde3e14d682cf7fedd6b1a25",
+      "bytes": 2924
+    },
+    {
+      "upstream_path": "scripts/run_gpt56_sol_issue_regression.zip",
+      "path": "instruction-lab/upstream/scripts/run_gpt56_sol_issue_regression.zip",
+      "sha256": "6e1ac373a0b351cc7c9e1ec56a3042129f8719e7c8b45eeeb1f2a012c566b1ee",
+      "bytes": 32250
+    },
+    {
+      "upstream_path": "scripts/run_gpt56_sol_prompt_bank.zip",
+      "path": "instruction-lab/upstream/scripts/run_gpt56_sol_prompt_bank.zip",
+      "sha256": "2e64cc047299e11363b1ea9678fb1b8c411c3ea288947299a7d106b16dc7dba2",
+      "bytes": 9951
+    },
+    {
+      "upstream_path": "scripts/run_gpt56_sol_safety_eval.zip",
+      "path": "instruction-lab/upstream/scripts/run_gpt56_sol_safety_eval.zip",
+      "sha256": "7ba5f37dc57f17c739e4ee36d24a999b4a9f980abae6f4f6d51cd1c55c2e6495",
+      "bytes": 3710
+    },
+    {
+      "upstream_path": "scripts/run_gpt6_astra_project_continuation_probe.zip",
+      "path": "instruction-lab/upstream/scripts/run_gpt6_astra_project_continuation_probe.zip",
+      "sha256": "642a5ac69884c6cbd1a5f1a3f47d29079695c228c014e4813efeee35507dd559",
+      "bytes": 11661
+    },
+    {
+      "upstream_path": "scripts/run_gpt6_project_continuation_probe.zip",
+      "path": "instruction-lab/upstream/scripts/run_gpt6_project_continuation_probe.zip",
+      "sha256": "803d258a0ef907d2a21e662ae4c5b2db85c460946388c1a6812e3ffc93e31312",
+      "bytes": 12253
+    },
+    {
+      "upstream_path": "scripts/run_issue_version_matrix.zip",
+      "path": "instruction-lab/upstream/scripts/run_issue_version_matrix.zip",
+      "sha256": "c88c82066141a9ac33e97625e17e5de1e6e1f77711a423c8add9e767ead15cea",
+      "bytes": 2204
+    },
+    {
+      "upstream_path": "scripts/run_jailbreakbench.zip",
+      "path": "instruction-lab/upstream/scripts/run_jailbreakbench.zip",
+      "sha256": "9e95811961035f600cc74bb15d292c0a7970e1bc0402cdc13ab57335eb4fd808",
+      "bytes": 5627
+    },
+    {
+      "upstream_path": "scripts/run_named_software_prompt_comparison.zip",
+      "path": "instruction-lab/upstream/scripts/run_named_software_prompt_comparison.zip",
+      "sha256": "dfcd1cd909ed2d5829d6e33e74b557d342532b32cfa189b75b6938246c7c4034",
+      "bytes": 2360
+    },
+    {
+      "upstream_path": "scripts/run_prompt_bank_matrix.zip",
+      "path": "instruction-lab/upstream/scripts/run_prompt_bank_matrix.zip",
+      "sha256": "2119736557617eaa69431692cb8ab23adf087af1566d936ba3328081f6af6fc3",
+      "bytes": 8003
+    },
+    {
+      "upstream_path": "scripts/run_visual_artifact_regression.zip",
+      "path": "instruction-lab/upstream/scripts/run_visual_artifact_regression.zip",
+      "sha256": "102f8f94dd7bbc36a648a21b1b345b673d41d1db50b25840a9e61a6a409b59e4",
+      "bytes": 2615
+    },
+    {
+      "upstream_path": "scripts/score_gpt56_sol_safety_eval.zip",
+      "path": "instruction-lab/upstream/scripts/score_gpt56_sol_safety_eval.zip",
+      "sha256": "77c1e38945bb07a9ed8d7aaea00beb7d0c6ca0ca01b5cf42d802653846285005",
+      "bytes": 2262
+    },
+    {
+      "upstream_path": "scripts/validate_gpt56_sol_candidate.zip",
+      "path": "instruction-lab/upstream/scripts/validate_gpt56_sol_candidate.zip",
+      "sha256": "21d35851f438c1ac39deeae60a1c4d66e871c980d84ddd4cf07f7db5ab2e4a45",
+      "bytes": 2904
+    },
+    {
+      "upstream_path": "scripts/verify_gpt56_sol_regression_scoring.zip",
+      "path": "instruction-lab/upstream/scripts/verify_gpt56_sol_regression_scoring.zip",
+      "sha256": "fd98e8c6959c3616cf260b7a3f2b58bdf891f9e0427f2dbefabd253b38a74fd8",
+      "bytes": 12665
+    },
+    {
+      "upstream_path": "scripts/verify_jailbreakbench.zip",
+      "path": "instruction-lab/upstream/scripts/verify_jailbreakbench.zip",
+      "sha256": "043c2ea86fcf27335061e96e455e38e71439d6d034456358fc943b0fb61575c5",
+      "bytes": 2729
+    },
+    {
+      "upstream_path": "scripts/verify_jb_e8_e9_metrics.zip",
+      "path": "instruction-lab/upstream/scripts/verify_jb_e8_e9_metrics.zip",
+      "sha256": "c1c39e0ece1214ccbe5070e0cbac4715deb8ce895eed097ef07bc419f4b99649",
+      "bytes": 1591
+    },
+    {
+      "upstream_path": "requirements-jailbreakbench.txt",
+      "path": "instruction-lab/upstream/requirements-jailbreakbench.txt",
+      "sha256": "862fae531b7fe54c62d6220576248951ec30ee345efb5bfc0955217dcd67cff6",
+      "bytes": 83
+    },
+    {
+      "upstream_path": "README.md",
+      "path": "instruction-lab/upstream/README.md",
+      "sha256": "d4079e2d5fe2cc6504aedb6c1c72aacd839ebe60efe960597ccb6690f04c4849",
+      "bytes": 16668
+    },
+    {
+      "upstream_path": "docs/comparison-tests.md",
+      "path": "instruction-lab/upstream/docs/comparison-tests.md",
+      "sha256": "0a923eade5a15989056ddd67f3995d23eac4f38a1dd41a4372d5ee038b912292",
+      "bytes": 24244
+    },
+    {
+      "upstream_path": "LICENSE",
+      "path": "instruction-lab/upstream/LICENSE",
+      "sha256": "0323ada93559caeaa847315fd7ba5f15d6bbafec9efe346f13771ac72385d6e8",
+      "bytes": 1094
+    },
+    {
+      "upstream_path": "gpt-5.6-sol-v45.zip",
+      "path": "instruction-packs/gpt-5.6-sol-v45.md",
+      "sha256": "c71c50e2f7a303b5eebc2b24c0b1ca0d9c753e3240db05c3e472c679907898f7",
+      "bytes": 5170
+    },
+    {
+      "upstream_path": "historical-versions/gpt-6-astra-v1.zip",
+      "path": "instruction-packs/gpt-6-astra-v1.md",
+      "sha256": "39fb46d6edc75963677fd92828dcb6c66dce11740b432efda3af9a683158ce16",
+      "bytes": 7495
+    }
+  ]
+}

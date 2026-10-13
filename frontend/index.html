@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>矩龙破甲 · v0.2.13</title>
+    <title>矩龙破甲 · v0.2.14</title>
     <link rel="stylesheet" href="styles.css">
     <script type="module" src="app.js"></script>
 </head>
@@ -14,7 +14,7 @@
     <div class="tb-logo" data-tauri-drag-region>
         <img class="tb-logo-image" src="assets/molong-logo.png" alt="矩龙破甲" data-tauri-drag-region>
         <span class="tb-logo-text" data-tauri-drag-region>矩龙破甲</span>
-        <span class="tb-logo-sub" data-tauri-drag-region>Desktop Edition · v0.2.13</span>
+        <span class="tb-logo-sub" data-tauri-drag-region>Desktop Edition · v0.2.14</span>
     </div>
     <div class="tb-spacer" data-tauri-drag-region></div>
     <button class="tb-btn" id="tb-minimize" title="最小化">—</button>
@@ -235,7 +235,7 @@
             <div class="dash-pad">
                 <section class="hero-card">
                     <div class="hero-copy">
-                        <div class="eyebrow">矩龙破甲 · v0.2.13</div>
+                        <div class="eyebrow">矩龙破甲 · v0.2.14</div>
                         <h1>把每一次交互，<span>变成可控能力。</span></h1>
                         <p>本地代理、指令增强与 Skills 工作流集中管理。数据留在本机，状态一目了然。</p>
                         <div class="hero-actions">
@@ -387,7 +387,7 @@
                 </section>
 
                 <section class="lab-summary-grid">
-                    <article class="lab-summary-item"><span>A 用户反馈</span><strong>4</strong><small>3/4 cases + 2/2 工件</small></article>
+                    <article class="lab-summary-item"><span>A 用户反馈</span><strong>4</strong><small>新候选须两次 fresh + 人工复核</small></article>
                     <article class="lab-summary-item"><span>B Issue 回归</span><strong id="lab-issue-count">--</strong><small id="lab-issue-detail">读取测试库</small></article>
                     <article class="lab-summary-item"><span>C 双语基准</span><strong id="lab-prompt-count">--</strong><small id="lab-prompt-detail">读取测试库</small></article>
                     <article class="lab-summary-item"><span>失败回流</span><strong id="lab-feedback-count">0</strong><small>本地记录</small></article>
@@ -412,7 +412,9 @@
                             <span>模型线</span>
                             <div class="lab-choice-row" id="lab-feedback-profile" role="radiogroup" aria-label="模型线">
                                 <button type="button" class="lab-choice" data-value="gpt-5.6-sol-v45" role="radio" aria-checked="false">5.6 v45</button>
-                                <button type="button" class="lab-choice active" data-value="gpt-6-astra-v1" role="radio" aria-checked="true">Astra v1</button>
+                                <button type="button" class="lab-choice active" data-value="gpt-6-astra-v1" role="radio" aria-checked="true">Astra v1（历史）</button>
+                                <button type="button" class="lab-choice" data-value="gpt-6-astra-v2-rc1" role="radio" aria-checked="false">Astra v2 RC1</button>
+                                <button type="button" class="lab-choice" data-value="gpt-6.1-sol-v1-rc2" role="radio" aria-checked="false">6.1 Sol RC2</button>
                             </div>
                         </div>
                         <div class="lab-field lab-field-wide">

@@ -866,7 +866,7 @@ function labReleaseCard(report) {
     const status = document.createElement('div');
     status.className = 'lab-release-status';
     const release = document.createElement('b');
-    release.textContent = report.release_status === 'formal' ? '正式版' : '稳定版';
+    release.textContent = ({ formal: '正式版（历史）', stable: '稳定版', prerelease: '预发布版' })[report.release_status] || report.release_status;
     const production = document.createElement('span');
     production.className = report.production_deployable ? 'ok' : 'err';
     production.textContent = report.production_deployable ? '可部署' : '已阻断';
@@ -935,7 +935,14 @@ function labReleaseCard(report) {
     actions.append(select, run);
     footer.append(evidence, actions);
 
-    card.append(top, integrity, gates, footer);
+    const notes = document.createElement('div');
+    notes.className = 'lab-evidence-notes';
+    (report.evidence_notes || []).forEach(text => {
+        const line = document.createElement('p');
+        line.textContent = text;
+        notes.appendChild(line);
+    });
+    card.append(top, integrity, gates, notes, footer);
     return card;
 }
 

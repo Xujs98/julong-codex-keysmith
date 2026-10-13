@@ -10,12 +10,17 @@ use std::path::{Path, PathBuf};
 pub const SETTINGS_FILE: &str = "super-instruct-instruction.json";
 pub const DEFAULT_PROFILE: &str = "standard";
 pub const GPT56_PROFILE: &str = "gpt-5.6-sol-v45";
+pub const GPT6_ASTRA_V2_PROFILE: &str = "gpt-6-astra-v2-rc1";
+pub const GPT61_SOL_PROFILE: &str = "gpt-6.1-sol-v1-rc2";
 pub const GPT6_ASTRA_PROFILE: &str = "gpt-6-astra-v1";
 const PROFILE_MARKER_PREFIX: &str = "<!-- super-instruct-instruction-profile:";
 const GPT56_PROMPT: &str = include_str!("../../instruction-packs/gpt-5.6-sol-v45.md");
 const GPT6_ASTRA_PROMPT: &str = include_str!("../../instruction-packs/gpt-6-astra-v1.md");
 const GPT56_SHA256: &str = "c71c50e2f7a303b5eebc2b24c0b1ca0d9c753e3240db05c3e472c679907898f7";
 const GPT6_ASTRA_SHA256: &str = "39fb46d6edc75963677fd92828dcb6c66dce11740b432efda3af9a683158ce16";
+
+const GPT6_ASTRA_V2_PROMPT: &str = include_str!("../../instruction-packs/gpt-6-astra-v2-rc1.md");
+const GPT61_SOL_PROMPT: &str = include_str!("../../instruction-packs/gpt-6.1-sol-v1-rc2.md");
 
 const RUNTIME_INTEGRATION: &str = r#"JULONG CODEX RUNTIME INTEGRATION
 
@@ -114,6 +119,30 @@ fn profiles() -> Vec<InstructionProfile> {
             source_bytes: GPT6_ASTRA_PROMPT.len(),
         },
     ];
+    result.push(InstructionProfile {
+        id: GPT6_ASTRA_V2_PROFILE,
+        name: "Astra v2 RC1 指令包",
+        summary: "可选预发布版，更新续作调度、对象绑定与事务工件规则。",
+        stages: &["CONTINUE", "DISPATCH", "TRANSACTION", "VERIFY"],
+        effect: "显式选择的候选快照；B/C 硬门禁尚未完成",
+        kind: "model-pack",
+        model_family: "gpt-6-astra",
+        prompt_version: "v2-rc1",
+        source_sha256: "d6976b90b399b9e11df9430dd3663072288f1d858a4910b1e9d5109b3ae7e660",
+        source_bytes: GPT6_ASTRA_V2_PROMPT.len(),
+    });
+    result.push(InstructionProfile {
+        id: GPT61_SOL_PROFILE,
+        name: "6.1 Sol v1 RC2 指令包",
+        summary: "可选预发布版，加入输出契约与同模型线候选迭代规则。",
+        stages: &["CONTINUE", "DISPATCH", "TRANSACTION", "VERIFY"],
+        effect: "显式选择的候选快照；B/C 硬门禁尚未完成",
+        kind: "model-pack",
+        model_family: "gpt-6.1-sol",
+        prompt_version: "v1-rc2",
+        source_sha256: "37382fb7082652e5b18c99fa5086fbc6d414993eaeae2ec7852ba372b031acac",
+        source_bytes: GPT61_SOL_PROMPT.len(),
+    });
     result.extend(crate::upstream::profiles());
     result
 }
@@ -128,7 +157,9 @@ pub fn profile(id: &str) -> Option<InstructionProfile> {
 
 pub fn recommended_profile_id(model: &str) -> Option<&'static str> {
     let model = model.trim().to_ascii_lowercase();
-    if model.starts_with("gpt-6-astra") {
+    if model.starts_with("gpt-6.1-sol") {
+        Some(GPT61_SOL_PROFILE)
+    } else if model.starts_with("gpt-6-astra") {
         Some(GPT6_ASTRA_PROFILE)
     } else if model.starts_with("gpt-5.6-sol") {
         Some(GPT56_PROFILE)
@@ -178,6 +209,8 @@ pub fn prompt_source(id: &str) -> Option<&'static str> {
     match id {
         GPT56_PROFILE => Some(GPT56_PROMPT),
         GPT6_ASTRA_PROFILE => Some(GPT6_ASTRA_PROMPT),
+        GPT6_ASTRA_V2_PROFILE => Some(GPT6_ASTRA_V2_PROMPT),
+        GPT61_SOL_PROFILE => Some(GPT61_SOL_PROMPT),
         _ => crate::upstream::prompt(id),
     }
 }
@@ -217,7 +250,7 @@ mod tests {
 
     #[test]
     fn profiles_are_stable_and_rendered() {
-        assert_eq!(list_profiles().len(), 11);
+        assert_eq!(list_profiles().len(), 13);
         let base = "bridge";
         assert_eq!(render(base, DEFAULT_PROFILE).unwrap(), base);
         let expanded = render(base, "expanded").unwrap();
@@ -247,6 +280,37 @@ mod tests {
         assert!(rendered.contains("JULONG CODEX RUNTIME INTEGRATION"));
         assert!(!rendered.contains("legacy bridge must not be stacked"));
         assert!(matches_rendered(&rendered, GPT6_ASTRA_PROFILE));
+    }
+
+    #[test]
+    fn prerelease_profiles_render_and_persist_without_replacing_legacy() {
+        use sha2::{Digest, Sha256};
+        let home = std::env::temp_dir().join(format!("julong-prerelease-{}", uuid::Uuid::new_v4()));
+        for id in [GPT6_ASTRA_V2_PROFILE, GPT61_SOL_PROFILE] {
+            let source = prompt_source(id).unwrap();
+            let profile = profile(id).unwrap();
+            assert_eq!(
+                profile.source_sha256,
+                format!("{:x}", Sha256::digest(source.as_bytes()))
+            );
+            assert_eq!(profile.source_bytes, source.len());
+            let rendered = render("old-bridge", id).unwrap();
+            assert!(rendered.starts_with("INJECTED REVISION ACTION"));
+            assert!(matches_rendered(&rendered, id));
+            assert!(!rendered.contains("old-bridge"));
+            save(&home, id).unwrap();
+            assert_eq!(selected_id(&home), id);
+        }
+        assert_eq!(
+            recommended_profile_id("gpt-6.1-sol-preview"),
+            Some(GPT61_SOL_PROFILE)
+        );
+        // A new optional RC never silently changes the existing Astra recommendation.
+        assert_eq!(
+            recommended_profile_id("gpt-6-astra"),
+            Some(GPT6_ASTRA_PROFILE)
+        );
+        fs::remove_dir_all(home).unwrap();
     }
 
     #[test]

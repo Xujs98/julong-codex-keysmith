@@ -1,6 +1,6 @@
 {
   "name": "julong-codex-keysmith",
-  "version": "0.2.13",
+  "version": "0.2.14",
   "scripts": {
     "tauri": "tauri",
     "prepare-sidecar": "node scripts/prepare-sidecar.mjs",
@@ -12,7 +12,8 @@
     "copy-resources": "node scripts/copy-resources.mjs",
     "build:mac:intel": "node scripts/prepare-sidecar.mjs x86_64-apple-darwin && tauri build --config src-tauri/tauri.sidecar.conf.json --target x86_64-apple-darwin --bundles app,dmg",
     "build:mac:apple": "node scripts/prepare-sidecar.mjs aarch64-apple-darwin && tauri build --config src-tauri/tauri.sidecar.conf.json --target aarch64-apple-darwin --bundles app,dmg",
-    "build:mac:universal": "node scripts/prepare-sidecar.mjs universal-apple-darwin && tauri build --config src-tauri/tauri.sidecar.conf.json --target universal-apple-darwin --bundles app,dmg"
+    "build:mac:universal": "node scripts/prepare-sidecar.mjs universal-apple-darwin && tauri build --config src-tauri/tauri.sidecar.conf.json --target universal-apple-darwin --bundles app,dmg",
+    "verify:upstream": "node scripts/verify-instruction-upstream.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

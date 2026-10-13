@@ -462,7 +462,17 @@ fn print_gate_report(report: &instruction_lab::GateReport) {
         },
         report.release_decision
     );
+    println!(
+        "release: {} source={}",
+        report.release_status, report.source_commit
+    );
     println!("evidence: {}", report.evidence_origin);
+    for note in &report.evidence_notes {
+        println!("note: {note}");
+    }
+    if !report.fresh_a_runs.is_empty() {
+        println!("A fresh runs: {}", report.fresh_a_runs.len());
+    }
     if let Some(path) = &report.report_path {
         println!("report: {path}");
     }

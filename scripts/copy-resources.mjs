@@ -2,6 +2,10 @@ import { cpSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { verifyInstructionUpstream } from "./verify-instruction-upstream.mjs";
+
+verifyInstructionUpstream();
+
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const resourcesDir = resolve(projectRoot, "src-tauri", "resources");
 const skillsDir = resolve(resourcesDir, "codex-skills");

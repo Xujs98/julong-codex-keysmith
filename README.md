@@ -55,7 +55,7 @@ julong-codex CLI ─┬─ start / stop / status ─▶ 复用同一套 DeployMa
 | Deploy | — | Codex config.toml 备份/修改/恢复，部署 bridge.md + skills/ |
 | Providers | — | 多供应商持久化、拖拽排序、测速/模型拉取、auth.json/config.toml 同步与异常自动切换 |
 | 多适配工作层 | AdapterRegistry | Codex、供应商、MCP、Skills 共用 detect → plan → preview → apply → verify → restore 生命周期 |
-| 模型指令 | InstructionProfiles | 三档通用边界与 `gpt-5.6-sol-v45`、`gpt-6-astra-v1` 两套模型包共用选择、部署和完整性状态 |
+| 模型指令 | InstructionProfiles | 三档通用边界、四套 gpt-instruct 模型包与六环境上游包共用选择、部署和完整性状态 |
 | 指令实验室 | InstructionLab | 失败样例回流、66-case/74-turn Issue 库、120-case 双语基准、证据导入、A/B/C 门禁与生产可用性校验 |
 | CLI | — | `julong-codex start/stop/status`，与桌面端共享部署、停止、端口和健康检查逻辑 |
 | MCP Tools | — | 31 个配置驱动工具，支持 Local / WSL / Docker / SSH，带超时、输出上限和可用性检查 |
@@ -75,14 +75,16 @@ julong-codex CLI ─┬─ start / stop / status ─▶ 复用同一套 DeployMa
 
 ## 模型专用指令包
 
-`instruction-packs/` 内置两套可审计的模型指令源：
+`instruction-packs/` 内置四套可审计的 gpt-instruct 模型指令源：
 
 | 指令 ID | 适配模型 | 来源版本 | 原始 SHA-256 |
 |---|---|---|---|
 | `gpt-5.6-sol-v45` | `gpt-5.6-sol` | gpt-instruct v45 | `c71c50e2f7a…898f7` |
-| `gpt-6-astra-v1` | `gpt-6-astra` | gpt-instruct Astra v1 | `39fb46d6edc7…ce16` |
+| `gpt-6-astra-v1` | `gpt-6-astra` | 历史正式版 Astra v1 | `39fb46d6edc7…ce16` |
+| `gpt-6-astra-v2-rc1` | `gpt-6-astra` | 可选预发布版 v2 RC1 | `d6976b90b399…e660` |
+| `gpt-6.1-sol-v1-rc2` | `gpt-6.1-sol` | 可选预发布版 v1 RC2 | `37382fb70826…acac` |
 
-两份 Markdown 保留来源发布字节，由 Rust 编译时嵌入；运行时只追加矩龙的工具目录、文件产物路由、跨平台执行、验证和回滚约定，避免与完整 `bridge.md` 重复叠加。来源提交、完整哈希及 MIT 许可记录见 `instruction-packs/README.md`。桌面端与 CLI 将选择写入同一个 `super-instruct-instruction.json`，部署后的 `bridge.md` 仍是 Codex 唯一加载入口。
+四份 Markdown 保留来源发布字节，由 Rust 编译时嵌入；运行时只追加矩龙的工具目录、文件产物路由、跨平台执行、验证和回滚约定，避免与完整 `bridge.md` 重复叠加。来源提交、完整哈希及 MIT 许可记录见 `instruction-packs/README.md`。桌面端与 CLI 将选择写入同一个 `super-instruct-instruction.json`，部署后的 `bridge.md` 仍是 Codex 唯一加载入口。
 
 ## 指令实验室闭环
 
@@ -96,7 +98,7 @@ julong-codex CLI ─┬─ start / stop / status ─▶ 复用同一套 DeployMa
 | C | 120 个 `medium` 双语样例；120/120 | 仅接受匹配 prompt、模型、reasoning 和 bank 哈希的证据 |
 | 生产运行 | 正式发布决策 + 本地来源/结构/测试库完整性 | 启动代理前执行 Rust 门禁，再进入事务部署和 MITM 管道 |
 
-桌面端“指令实验室”同时展示硬门禁和生产状态。当前上游真实记录也保持原样：Astra v1 为正式发布且生产可部署，但 B 为 52/66、C 尚未运行，因此显示“可部署”和“硬门禁未完成”两个独立结论。外部隔离评测完成后可按 `instruction-lab/evidence-template.json` 导入证据；导入只更新本地模型线的当前证据，不会改写内置的上游发布记录。
+桌面端“指令实验室”同时展示硬门禁和生产状态。历史上游真实记录保持原样：Astra v1 为正式发布且生产可部署，但 B 为 52/66、C 尚未运行，因此显示“可部署”和“硬门禁未完成”两个独立结论。外部隔离评测完成后可按 `instruction-lab/evidence-template.json` 导入证据；导入只更新本地模型线的当前证据，不会改写内置的上游发布记录。
 
 ## 快速开始
 
@@ -351,7 +353,7 @@ shasum -a 256 instruction-lab/banks/issue-regression.jsonl instruction-lab/banks
 ```
 Super-Instruct-Codex-5.6/
 ├── bridge.md                      # 破甲指令集（注入到 system role）
-├── instruction-packs/             # 5.6 v45 / Astra v1 模型指令源、来源与许可
+├── instruction-packs/             # 四套 gpt-instruct 模型源、六环境包、来源与许可
 ├── instruction-lab/               # A/B/C 清单、66/74 Issue 库、120-case 基准与证据模板
 ├── codex-skills/                  # 29 个 Codex 技能模块（开关后即时同步到 ~/.codex/skills/）
 │   └── novel-agent/               # 小说创作 Skill：工具集 + 本地状态模块
@@ -716,3 +718,39 @@ Desktop `/v1/models` 返回与本地 profile 一致的角色目录；请求在�
 配置管理 → 部署操作 → 部署所选环境的确认弹窗改为固定高度布局：变更列表在独立区域滚动，长路径完整换行展示，标题与底部操作栏保持可见。存在溢出内容时，必须滚动到列表底部后“确认部署”才会解锁；内容未溢出时自动解锁。弹窗支持键盘聚焦、`Esc` 关闭、窗口尺寸变化重新计算，以及 `aria-disabled`/状态提示同步。
 
 验证覆盖滚动门控的无溢出、未到底、到达底部、异常尺寸归一化和按钮/ARIA 状态同步。版本已同步到 0.2.13；本次不新增打包资源、不主动重打包 App。Windows 完整 NSIS EXE 仍应在 Windows 目标机运行 `build-windows.ps1` / `.cmd` 生成，macOS `build-windows.sh` 仅做其支持的交叉编译。
+
+
+### v0.2.14：增量同步 gpt-instruct
+
+从此前的 `0ad8ec58` 同步到 2026-10-14 核对的上游提交
+`3ab84df64468bb74cc9eb4e5423660083953c44f`（提交日期 2026-10-04）。
+
+- 新增 **Astra v2 RC1** 与 **6.1 Sol v1 RC2**，可在配置页、实验室与 CLI 显式选择。
+  保留 5.6 v45 稳定包、Astra v1 历史包及已有选择；所有 GPT 包继续共用 Codex 环境槽位。
+- 实验室区分预发布、历史正式版、稳定版和部署完整性。A 要求两次 fresh、人工复核、必测三项和技术工件；B 非云五族与云端重复分开记录，C 尚未运行。
+- 更新英文 biology 样例的长度规则、上游评分器与续作探针；新增 JB-A/JB-B 工具源码归档。
+  上游未提交 JB 冻结数据、原始模型输出与官方评分，不显示虚构通过率，也不将 JB 混入 A/B/C。
+- 旧测试库、评分方法和导入模板保留在 `instruction-lab/legacy/` 及原模板路径。
+  新 RC 使用各自的 `evidence-template-gpt-*.json`，拒绝旧方法身份混用。
+- 资源复制前执行 `verify-instruction-upstream.mjs`，校验导入文件、两代测试库及四份模型源。
+  评测工具原 ZIP、SHA-256 清单、上游说明与 MIT 许可随资源分发。
+
+macOS 开发检查及 CLI 示例（在项目目录执行）：
+
+```bash
+npm run verify:upstream
+node scripts/copy-resources.mjs
+node scripts/verify-instruction-upstream.mjs src-tauri/resources
+cargo test --manifest-path src-tauri/Cargo.toml
+cargo run --manifest-path src-tauri/Cargo.toml --bin julong-codex -- instruction list
+cargo run --manifest-path src-tauri/Cargo.toml --bin julong-codex -- instruction lab check gpt-6-astra-v2-rc1
+# 显式选择另一模型线；随后按现有流程部署
+cargo run --manifest-path src-tauri/Cargo.toml --bin julong-codex -- instruction set gpt-6.1-sol-v1-rc2
+```
+
+macOS 仍由用户运行 `build-macos.sh`。Windows 目标机继续使用
+`build-windows.ps1` / `build-windows.cmd` 生成完整 NSIS EXE；以上 Node 校验命令
+也适用于 Windows。四个构建入口已增加新包和历史证据资源预检，递归资源映射自动携带新增文件。
+macOS 的 `build-windows.sh` 仍仅覆盖其已有交叉编译范围，不能替代 Windows 安装后验收。
+本次不重新打包 App、不切换当前环境，也不触发远端模型评测。验证结果见
+[验证记录](docs/verification-0.2.14.md)。
