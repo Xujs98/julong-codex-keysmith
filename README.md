@@ -5,6 +5,18 @@ OpenAI Codex CLI（GPT-5.6 / GPT-6 Astra）MITM 破甲框架 — Rust + Tauri �
 > 本仓库是上游项目的二次开发版本，现由 **Xujs98** 在个人仓库中持续维护：
 > [Xujs98/julong-codex-keysmith](https://github.com/Xujs98/julong-codex-keysmith)。
 
+## 推荐中转站与“矩龙大白话”
+
+如果要使用 **5.6sol-大白话·指哪打哪**，可在“供应商”页新增一个 OpenAI / Codex 供应商，并填写以下推荐值：
+
+| 配置项 | 推荐值 |
+|---|---|
+| API 中转地址 | [`https://api.julongkj.top`](https://api.julongkj.top) |
+| 默认模型 | `gpt-5.6-sol-大白话` |
+| 中转站侧激活口令 | `矩龙大白话` |
+
+保存供应商后启动代理，在当前模型会话中单独发送 `矩龙大白话`，按中转站的约定启用该模型的“指哪打哪”模式。这个口令属于推荐中转站与模型的使用约定；矩龙代理自身的本地会话验收仍使用下文“客户端环境”章节中的 `矩龙` 口令。
+
 ![矩龙破甲项目界面](docs/images/molong-dashboard.png)
 
 通过本地 MITM 代理拦截 Codex CLI 的 API 请求，在管道中执行注入、篡改、记忆和监控，配合通用 `bridge.md` 与模型专用指令包实现竞赛沙箱模式。
@@ -513,6 +525,10 @@ MIT — 见 [LICENSE](LICENSE)
 -------------
 
 打扰了，谢谢看到这里。
+
+### v0.2.15：矩龙大白话中转配置
+
+README 新增推荐中转站配置：`https://api.julongkj.top`、`gpt-5.6-sol-大白话` 和中转站侧激活口令 `矩龙大白话`，并明确该口令与矩龙代理本地验收口令的边界。同步递增应用补丁版本号。
 
 ### v0.2.6：六环境、模型指令与会话启用
 
